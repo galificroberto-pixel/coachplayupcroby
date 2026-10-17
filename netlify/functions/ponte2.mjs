@@ -1,6 +1,6 @@
 // Coach Play Up – "ponte" verso internet (Netlify Functions, gratuito).
 // Va SOLO su siti di bowling affidabili (elenco qui sotto), legge il testo delle pagine e lo restituisce all'app.
-// Azioni:  ?a=ping  ·  ?a=search&q=...&site=bowwwl.com  ·  ?a=page&url=https://...
+// Azioni:  ?a=ping  ·  ?a=search&q=...&site=bowwwl.com  ·  ?a=page&url=https://...  ·  ?a=kegel&ids=1,2,3 (schede Kegel Pattern Library)
 const SITES = [
   // archivi e riviste specializzate
   'bowwwl.com', 'bowlingthismonth.com', 'nationalbowlingacademy.com', 'bowlingball.com', 'bowling.com',
@@ -24,8 +24,8 @@ function toText(html){
     .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 const links = html => [...html.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].map(m => ({href: decode(m[1]), text: toText(m[2]).slice(0, 120)}));
-async function get(url, binary){
-  const r = await fetch(url, {headers: {'user-agent': UA, 'accept-language': 'it,en;q=0.8'}, redirect: 'follow', signal: AbortSignal.timeout(12000)});
+async function get(url, binary, ms = 12000){
+  const r = await fetch(url, {headers: {'user-agent': UA, 'accept-language': 'it,en;q=0.8'}, redirect: 'follow', signal: AbortSignal.timeout(ms)});
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return binary ? r : r.text();
 }
@@ -50,6 +50,23 @@ async function webSearch(query){
     } catch {}
   }
   return {res, motore};
+}
+// scheda di un pattern della Kegel Pattern Library → dati compatti
+function kegelParse(html, id){
+  const name = toText((html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i) || [])[1] || '').replace(/\s+/g, ' ').trim();
+  if (!name || /not\s*found|error/i.test(name)) return null;
+  const t = toText(html).replace(/\s*\|\s*/g, '\n');
+  const num = re => { const m = t.match(re); return m ? +m[1] : null; };
+  const o = {id: +id, n: name.slice(0, 120),
+    l: num(/DISTANCE\s*:?\s*(\d{2}(?:\.\d+)?)/i), r: num(/RATIO\s*:?\s*(\d{1,2}(?:\.\d+)?)\s*:\s*1/i), v: num(/VOLUME\s*:?\s*(\d{1,2}(?:\.\d+)?)/i),
+    f: num(/FORWARD\s*:?\s*(\d{1,2}(?:\.\d+)?)/i), b: num(/REVERSE\s*:?\s*(\d{1,2}(?:\.\d+)?)/i), p: num(/PUMP\s*:?\s*(\d{2,3})/i), d: num(/DROP\s*BRUSH\s*:?\s*(\d{1,2})/i)};
+  const tk = t.match(/TANKS?\s*:?\s*([A-Za-z][A-Za-z0-9 &+\-]{0,30})/i); if (tk) o.t = tk[1].trim().split(/\s{2,}|\n/)[0];
+  // categoria: la riga breve subito dopo il titolo
+  const i = t.indexOf(name.slice(0, 30)); if (i >= 0){ const nx = t.slice(i + name.length).split('\n').map(x => x.trim()).filter(Boolean)[0] || ''; if (nx.length < 50 && !/DISTANCE|RATIO|VOLUME|:/.test(nx)) o.c = nx; }
+  if (/REVERSE\s*DROP\s*BRUSH/i.test(t)) o.rdb = 1;
+  if (o.l == null && o.v == null) return null;
+  for (const k of Object.keys(o)) if (o[k] == null) delete o[k];
+  return o;
 }
 const slug = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 export default async (req) => {
@@ -85,6 +102,13 @@ export default async (req) => {
       const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 2.5e6) return out({error: 'immagine troppo grande'}, 413);
       const title = toText((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
       return out({ok: true, page, imgUrl, type: ct, img: buf.toString('base64'), title, text: toText(html).slice(0, 20000), fetched: new Date().toISOString()});
+    }
+    // tanti pattern Kegel insieme (fino a 25 per volta), letti in parallelo: per l'archivio completo nell'app
+    if (a === 'kegel'){
+      const ids = (u.searchParams.get('ids') || '').split(',').map(x => parseInt(x, 10)).filter(x => x > 0 && x < 100000).slice(0, 25);
+      if (!ids.length) return out({error: 'ids'}, 400);
+      const res = await Promise.all(ids.map(async id => { try { return kegelParse(await get('https://patternlibrary.kegel.net/pattern/' + id, false, 7000), id) || {id, x: 1}; } catch (e){ return {id, x: /404/.test(e.message) ? 1 : 2}; } }));
+      return out({ok: true, patterns: res.filter(r => !r.x), missing: res.filter(r => r.x === 1).map(r => r.id), failed: res.filter(r => r.x === 2).map(r => r.id), fetched: new Date().toISOString()});
     }
     if (a === 'page'){
       const target = new URL(u.searchParams.get('url') || '');
