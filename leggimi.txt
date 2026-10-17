@@ -1,0 +1,25 @@
+COACH PLAY UP – versione OFFLINE (by Croby · © 2026 Croby, tutti i diritti riservati)
+
+Questa versione ha tutto dentro: non usa Claude né altri servizi su internet.
+Serve internet solo la prima volta che apri il sito (scarica circa 26 MB sul dispositivo)
+e quando vuoi ricevere una versione nuova. Poi funziona anche in modalità aereo.
+
+METTERLA ONLINE (una volta sola, dal computer)
+1. Entra nel tuo account su https://app.netlify.com
+2. Apri il progetto (o creane uno con "Deploy manually") > scheda Deploys.
+3. Trascina nel riquadro la cartella "coach-play-up" (quella con index.html dentro).
+4. Aspetta la scritta verde "Published".
+
+INSTALLARLA
+- iPhone/iPad: Safari > Condividi > "Aggiungi alla schermata Home".
+- Android: Chrome > menu ⋮ > "Installa app".
+- PC/Mac: Chrome o Edge > icona di installazione nella barra degli indirizzi.
+Apri l'app una volta con internet e aspetta qualche secondo: da quel momento è tutta sul dispositivo.
+
+AGGIORNARLA
+Trascina la nuova cartella nella scheda Deploys dello stesso progetto.
+Chi ha l'app installata riceve la nuova versione la prima volta che la apre con internet.
+
+I DATI
+Giocatori, diario, analisi e quello che l'app impara restano sul dispositivo.
+Usa "Esporta backup" per salvarli o spostarli su un altro telefono o computer.
