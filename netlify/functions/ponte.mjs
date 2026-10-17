@@ -14,7 +14,7 @@ const SITES = [
 ];
 const okHost = h => SITES.some(s => h === s || h.endsWith('.' + s));
 const UA = 'Mozilla/5.0 (compatible; CoachPlayUp/1.0; +https://www.netlify.com)';
-const H = {'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=3600, s-maxage=86400'};
+const H = {'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'no-store', 'netlify-vary': 'query'};
 const out = (o, s = 200) => new Response(JSON.stringify(o), {status: s, headers: H});
 const decode = s => s.replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n));
 // HTML → testo leggibile, tenendo righe di tabella e celle separate da " | "
