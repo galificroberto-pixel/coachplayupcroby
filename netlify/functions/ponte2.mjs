@@ -24,8 +24,9 @@ function toText(html){
     .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 const links = html => [...html.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].map(m => ({href: decode(m[1]), text: toText(m[2]).slice(0, 120)}));
-async function get(url, binary, ms = 12000){
-  const r = await fetch(url, {headers: {'user-agent': UA, 'accept-language': 'it,en;q=0.8'}, redirect: 'follow', signal: AbortSignal.timeout(ms)});
+const UA_BROWSER = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+async function get(url, binary, ms = 12000, browser){
+  const r = await fetch(url, {headers: {'user-agent': browser ? UA_BROWSER : UA, 'accept-language': 'it,en;q=0.8', ...(browser ? {accept: binary ? 'image/avif,image/webp,image/png,image/*;q=0.8' : 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8'} : {})}, redirect: 'follow', signal: AbortSignal.timeout(ms)});
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return binary ? r : r.text();
 }
@@ -81,27 +82,39 @@ export default async (req) => {
       const {res, motore} = await webSearch(query);
       return out({ok: true, q: query, motore, results: res});
     }
-    // foto e scheda di una palla dall'archivio Bowwwl: prima l'indirizzo diretto, poi la ricerca
+    // foto e scheda di una palla dall'archivio Bowwwl: prima l'indirizzo diretto, poi le varianti del nome, poi la ricerca
     if (a === 'ballimg'){
       const brand = (u.searchParams.get('brand') || '').slice(0, 60), model = (u.searchParams.get('model') || '').slice(0, 80);
       if (!model) return out({error: 'model'}, 400);
-      let page = `https://www.bowwwl.com/bowling-ball-database/${slug(brand)}/${slug(model)}`, html = '';
-      try { html = await get(page); } catch {}
-      if (!/og:image/i.test(html)){
-        const {res} = await webSearch(`${brand} ${model} site:bowwwl.com`);
-        const hit = res.find(r => /\/bowling-ball-database\/[^/]+\/[^/?#]+/.test(r.url));
-        if (!hit) return out({error: 'foto non trovata'}, 404);
-        page = hit.url; html = await get(page);
+      const t0 = Date.now(), left = () => 9300 - (Date.now() - t0);   // Netlify ferma la funzione dopo 10 secondi
+      const B = slug(brand), M = slug(model), mNoBrand = B && M.startsWith(B + '-') ? M.slice(B.length + 1) : M;
+      const pages = [...new Set([`${B}/${mNoBrand}`, `${B}/${M}`].filter(x => !x.startsWith('/')))].map(x => `https://www.bowwwl.com/bowling-ball-database/${x}`);
+      let page = '', html = '';
+      for (const pg of pages){ if (left() < 3000) break; try { const h = await get(pg, false, Math.max(1000, Math.min(5000, left() - 2500)), true); if (/og:image|\/balls\//i.test(h)){ page = pg; html = h; break; } } catch {} }
+      if (!html && left() > 5000){
+        try { const {res} = await webSearch(`${brand} ${model} bowling ball site:bowwwl.com`); const hit = res.find(r => /\/bowling-ball-database\/[^/]+\/[^/?#]+/.test(r.url)); if (hit){ page = hit.url; html = await get(page, false, Math.min(4000, left() - 2000), true); } } catch {}
       }
-      const og = (html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) || [])[1];
-      if (!og) return out({error: 'foto non trovata'}, 404);
-      const imgUrl = new URL(decode(og), page).href;
-      if (!okHost(new URL(imgUrl).hostname.replace(/^www\./, ''))) return out({error: 'sito non ammesso'}, 403);
-      const r = await get(imgUrl, true), ct = r.headers.get('content-type') || 'image/png';
-      if (!/^image\//i.test(ct)) return out({error: 'non è un’immagine'}, 415);
-      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 2.5e6) return out({error: 'immagine troppo grande'}, 413);
-      const title = toText((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
-      return out({ok: true, page, imgUrl, type: ct, img: buf.toString('base64'), title, text: toText(html).slice(0, 20000), fetched: new Date().toISOString()});
+      // le foto possibili: originale grande, poi quella della scheda, poi i nomi file più comuni
+      const cand = [];
+      const og = html && (html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) || [])[1];
+      const addC = x => { try { const v = new URL(decode(x), page || 'https://www.bowwwl.com/').href; if (!cand.includes(v)) cand.push(v); } catch {} };
+      const orig = x => x.replace(/\/styles\/[^/]+\/public\//, '/').replace(/\?.*$/, '');
+      if (og && /\/balls\//.test(og)){ addC(orig(og)); addC(og); }
+      for (const m of (html || '').matchAll(/(?:src|srcset|data-src)=["']([^"' ]*\/balls\/[^"' ]+)/gi)){ const f = m[1]; if (M && f.includes(mNoBrand)){ addC(orig(f)); addC(f); } }
+      for (const n of [...new Set([`${B}-${mNoBrand}`, M, `${B}-${mNoBrand}-front`])]) for (const ext of ['png', 'jpg']) addC(`https://www.bowwwl.com/sites/default/files/balls/${n}.${ext}`);
+      if (og && !cand.includes(og)) addC(og);
+      for (const imgUrl of cand.slice(0, 10)){
+        if (left() < 800) break;
+        try {
+          if (!okHost(new URL(imgUrl).hostname.replace(/^www\./, ''))) continue;
+          const r = await get(imgUrl, true, Math.max(500, Math.min(5000, left() - 300)), true), ct = r.headers.get('content-type') || '';
+          if (!/^image\//i.test(ct) || /svg/i.test(ct)) continue;
+          const buf = Buffer.from(await r.arrayBuffer()); if (buf.length < 800 || buf.length > 3.5e6) continue;
+          const title = toText((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+          return out({ok: true, page: page || `https://www.bowwwl.com/bowling-ball-database/${B}/${mNoBrand}`, imgUrl, type: ct, img: buf.toString('base64'), title, text: html ? toText(html).slice(0, 20000) : '', fetched: new Date().toISOString()});
+        } catch {}
+      }
+      return out({error: 'foto non trovata', page, tried: cand.slice(0, 10)}, 404);
     }
     // tanti pattern Kegel insieme (fino a 25 per volta), letti in parallelo: per l'archivio completo nell'app
     if (a === 'kegel'){
