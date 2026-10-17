@@ -1,0 +1,47 @@
+COACH PLAY UP – versione OFFLINE (by Croby · © 2026 Croby, tutti i diritti riservati)
+
+Questa versione ha tutto dentro: non usa Claude né altri servizi su internet.
+Serve internet solo la prima volta che apri il sito (scarica circa 26 MB sul dispositivo)
+e quando vuoi ricevere una versione nuova. Poi funziona anche in modalità aereo.
+
+METTERLA ONLINE (una volta sola, dal computer)
+1. Entra nel tuo account su https://app.netlify.com
+2. Apri il progetto (o creane uno con "Deploy manually") > scheda Deploys.
+3. Trascina nel riquadro la cartella "coach-play-up" (quella con index.html dentro).
+4. Aspetta la scritta verde "Published".
+
+INSTALLARLA
+- iPhone/iPad: Safari > Condividi > "Aggiungi alla schermata Home".
+- Android: Chrome > menu ⋮ > "Installa app".
+- PC/Mac: Chrome o Edge > icona di installazione nella barra degli indirizzi.
+Apri l'app una volta con internet e aspetta qualche secondo: da quel momento è tutta sul dispositivo.
+
+AGGIORNARLA
+Trascina la nuova cartella nella scheda Deploys dello stesso progetto.
+Chi ha l'app installata riceve la nuova versione la prima volta che la apre con internet.
+
+COLLEGARLA A INTERNET (gratis, facoltativo)
+Con il collegamento l'app può: cercare RG e differenziale di una palla su 2 fonti
+(Bowwwl + sito del produttore) e confrontarle; scaricare la scheda ufficiale di un
+pattern dalla Kegel Pattern Library; controllare le novità dei regolamenti su FISBB,
+USBC e World Bowling. Legge SOLO siti di bowling affidabili (elenco nel file
+netlify/functions/ponte.mjs). Senza collegamento l'app funziona lo stesso.
+
+Il collegamento è una piccola "funzione" Netlify. Netlify la attiva solo se il sito
+arriva da GitHub (con il trascinamento della cartella NON funziona). Una volta sola:
+1. Crea un account gratuito su https://github.com
+2. In alto a destra "+" > "New repository" > nome: coach-play-up > Private > Create.
+3. Nella pagina del repository: "uploading an existing file" > trascina TUTTO il
+   contenuto della cartella "coach-play-up" (anche la cartella "netlify" e il file
+   "netlify.toml") > "Commit changes".
+4. Su https://app.netlify.com: "Add new site" > "Import an existing project" > GitHub
+   > scegli coach-play-up > lascia tutto com'è > "Deploy".
+5. Apri il sito, vai in Regolamenti > "Novità dai siti ufficiali" > "Prova il
+   collegamento a internet": deve diventare verde.
+Per aggiornare: su GitHub "Add file" > "Upload files" > trascina i file nuovi >
+"Commit changes". Netlify pubblica da solo in 1-2 minuti.
+Il piano gratuito di Netlify basta ampiamente per un uso personale o di squadra.
+
+I DATI
+Giocatori, diario, analisi e quello che l'app impara restano sul dispositivo.
+Usa "Esporta backup" per salvarli o spostarli su un altro telefono o computer.

@@ -1,6 +1,6 @@
 // Coach Play Up – service worker: alla prima apertura salva tutta l'app sul dispositivo,
 // poi funziona anche senza internet. Con internet controlla se c'è una versione nuova.
-const CACHE = 'coach-play-up-v3.19-abde1a44';
+const CACHE = 'coach-play-up-v3.20.1-9d13896e';
 const FILES = [
 "./",
 "./icons/android-maskable-192.png",
@@ -36,6 +36,8 @@ const FILES = [
 "./lib/pdfjs/pdf.worker.js",
 "./lib/xlsx.full.min.js",
 "./manifest.webmanifest",
+"./netlify.toml",
+"./netlify/functions/ponte.mjs",
 "./pdf/jspdf.js",
 "./pose/movenet.js",
 "./pose/tf.js"
@@ -45,6 +47,7 @@ self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Pr
 self.addEventListener('fetch', e => {
   const r = e.request; if (r.method !== 'GET') return;
   const url = new URL(r.url); if (url.origin !== location.origin) return;
+  if (url.pathname.startsWith('/.netlify/')) return; // collegamento a internet: mai dalla cache
   if (url.pathname.endsWith('version.json')){ e.respondWith(fetch(r, {cache: 'no-store'})); return; }
   // pagina: prima la rete (per avere sempre l'ultima versione), senza rete quella salvata
   if (r.mode === 'navigate'){ e.respondWith(fetch(r).catch(() => caches.match('./index.html', {ignoreSearch: true}))); return; }
