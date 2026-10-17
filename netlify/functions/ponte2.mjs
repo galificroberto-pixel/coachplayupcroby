@@ -116,6 +116,15 @@ export default async (req) => {
       }
       return out({error: 'foto non trovata', page, tried: cand.slice(0, 10)}, 404);
     }
+    // una foto da un sito ammesso (per metterla nel PDF della borsa in buona risoluzione)
+    if (a === 'img'){
+      const target = new URL(u.searchParams.get('url') || '');
+      if (!/^https?:$/.test(target.protocol) || !okHost(target.hostname.replace(/^www\./, ''))) return out({error: 'sito non ammesso'}, 403);
+      const r = await get(target.href, true, 8000, true), ct = r.headers.get('content-type') || '';
+      if (!/^image\//i.test(ct) || /svg/i.test(ct)) return out({error: 'non è un’immagine'}, 415);
+      const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > 3.5e6) return out({error: 'immagine troppo grande'}, 413);
+      return out({ok: true, url: target.href, type: ct, img: buf.toString('base64')});
+    }
     // tanti pattern Kegel insieme (fino a 25 per volta), letti in parallelo: per l'archivio completo nell'app
     if (a === 'kegel'){
       const ids = (u.searchParams.get('ids') || '').split(',').map(x => parseInt(x, 10)).filter(x => x > 0 && x < 100000).slice(0, 25);
