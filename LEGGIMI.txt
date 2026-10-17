@@ -11,6 +11,8 @@ METTERLA ONLINE (una volta sola, dal computer)
 4. Aspetta la scritta verde "Published".
 
 INSTALLARLA
+Nell'app, in alto, ci sono i pulsanti "Installa su Android" e "Installa su iOS":
+su Android apre la finestra di installazione, su iPhone/iPad indica con una freccia dove toccare.
 - iPhone/iPad: Safari > Condividi > "Aggiungi alla schermata Home".
 - Android: Chrome > menu ⋮ > "Installa app".
 - PC/Mac: Chrome o Edge > icona di installazione nella barra degli indirizzi.
