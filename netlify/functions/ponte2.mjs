@@ -1,6 +1,6 @@
 // Coach Play Up – "ponte" verso internet (Netlify Functions, gratuito).
 // Va SOLO su siti di bowling affidabili (elenco qui sotto), legge il testo delle pagine e lo restituisce all'app.
-// Azioni:  ?a=ping  ·  ?a=search&q=...&site=bowwwl.com  ·  ?a=page&url=https://...  ·  ?a=kegel&ids=1,2,3 (schede Kegel Pattern Library)
+// Azioni:  ?a=balldb&src=btm|btmbrand|storm|bowwwl&page=N (archivio palle)  ·  ?a=ping  ·  ?a=search&q=...&site=bowwwl.com  ·  ?a=page&url=https://...  ·  ?a=kegel&ids=1,2,3 (schede Kegel Pattern Library)
 const SITES = [
   // archivi e riviste specializzate
   'bowwwl.com', 'bowlingthismonth.com', 'nationalbowlingacademy.com', 'bowlingball.com', 'bowling.com',
@@ -131,6 +131,31 @@ export default async (req) => {
       if (!ids.length) return out({error: 'ids'}, 400);
       const res = await Promise.all(ids.map(async id => { try { return kegelParse(await get('https://patternlibrary.kegel.net/pattern/' + id, false, 7000), id) || {id, x: 1}; } catch (e){ return {id, x: /404/.test(e.message) ? 1 : 2}; } }));
       return out({ok: true, patterns: res.filter(r => !r.x), missing: res.filter(r => r.x === 1).map(r => r.id), failed: res.filter(r => r.x === 2).map(r => r.id), fetched: new Date().toISOString()});
+    }
+    // archivio palle da più fonti: tabella completa di Bowling This Month, catalogo Storm (Storm, Roto Grip, 900 Global), database Bowwwl a pagine
+    if (a === 'balldb'){
+      const src = u.searchParams.get('src') || 'btm', page = Math.max(0, Math.min(60, parseInt(u.searchParams.get('page') || '0', 10) || 0));
+      const cellsOf = html => [...html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map(m => [...m[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(c => toText(c[1]).replace(/\s+/g, ' ').trim())).filter(r => r.length >= 6);
+      if (src === 'btm'){
+        const html = await get('https://www.bowlingthismonth.com/bowling-ball-reviews/ball-comparison-table/', false, 9300, true);
+        const rows = cellsOf(html).filter(r => /^2[.,]\d/.test(r[5] || '')).map(r => r.slice(0, 8));
+        return out({ok: true, src, rows, fetched: new Date().toISOString()});
+      }
+      if (src === 'btmbrand'){
+        const b = slug(u.searchParams.get('brand') || 'storm');
+        const html = await get(`https://www.bowlingthismonth.com/ball-manufacturer/${b}/`, false, 9300, true);
+        return out({ok: true, src, brand: b, rows: cellsOf(html).filter(r => r.some(c => /^2[.,]\d{1,3}$/.test(c))), fetched: new Date().toISOString()});
+      }
+      if (src === 'storm'){
+        const html = await get(`https://www.stormbowling.com/bowling-balls/24/1/${Math.max(1, page)}/`, false, 9300, true);
+        return out({ok: true, src, page, text: toText(html).slice(0, 120000), fetched: new Date().toISOString()});
+      }
+      if (src === 'bowwwl'){
+        const html = await get(`https://www.bowwwl.com/bowling-ball-database?order=field_release_date&sort=desc&page=${page}`, false, 9300, true);
+        const rows = cellsOf(html);
+        return out({ok: true, src, page, rows, text: rows.length ? '' : toText(html).slice(0, 120000), last: !/[?&]page=\d+/.test(html.slice(html.lastIndexOf('pager') || 0)) && !rows.length, fetched: new Date().toISOString()});
+      }
+      return out({error: 'fonte sconosciuta'}, 400);
     }
     if (a === 'page'){
       const target = new URL(u.searchParams.get('url') || '');
