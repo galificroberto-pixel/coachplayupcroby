@@ -47,3 +47,21 @@ Il piano gratuito di Netlify basta ampiamente per un uso personale o di squadra.
 I DATI
 Giocatori, diario, analisi e quello che l'app impara restano sul dispositivo.
 Usa "Esporta backup" per salvarli o spostarli su un altro telefono o computer.
+
+APP RISERVATA – IL LUCCHETTO (facoltativo, consigliato)
+Con il lucchetto l'app si apre solo sui dispositivi attivati: chi ha il link ma non
+il codice vede solo la pagina "Attiva la tua app". I codici li crea solo Croby e ognuno
+vale una volta sola. Si accende così, una volta sola:
+1. Carica su GitHub tutto il contenuto della cartella (anche "netlify", "package.json"
+   e "attiva.html") e aspetta il deploy: l'app funziona ancora libera come prima.
+2. Su https://app.netlify.com apri il sito > Site configuration > Environment variables
+   > Add a variable > Add a single variable.
+   Key: CPU_ADMIN    Value: la TUA password (almeno 12 caratteri, segnala da parte).
+   Lascia "All scopes" e premi Create variable.
+3. Deploys > Trigger deploy > Deploy site (serve un deploy nuovo per accendere il lucchetto).
+4. Apri il sito: compare "Attiva la tua app". Tocca "Sei Croby? Entra come proprietario"
+   e scrivi la password. Fallo su ogni tuo PC e telefono (anche nell'app installata).
+5. Nell'app: Dati e backup > Codici di attivazione > nome del giocatore > Genera un
+   codice nuovo > Invia su WhatsApp.
+Per bloccare tutti in un colpo: cambia la password CPU_ADMIN e rifai il deploy
+(dovrai rientrare anche tu). Per spegnere il lucchetto: cancella CPU_ADMIN e rifai il deploy.

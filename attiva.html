@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Coach Play Up · Attivazione</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/pc-32.png">
+<link rel="apple-touch-icon" href="icons/iphone-180.png">
+<meta name="theme-color" content="#C21F32">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="robots" content="noindex">
+<style>
+:root{--bg:#EEF1F4;--surface:#fff;--ink:#14202B;--muted:#5B6875;--line:#D6DCE2;--accent:#C21F32;--ok:#2E9D5B;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0B1218;--surface:#131D26;--ink:#E8EEF3;--muted:#9AA8B5;--line:#24313D;--accent:#E8314B;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px 16px}
+.card{width:100%;max-width:440px;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:26px 22px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
+.logo{display:flex;align-items:center;gap:12px;margin-bottom:6px}.logo img{width:52px;height:52px;border-radius:12px}
+h1{margin:0;font-size:28px;line-height:1;letter-spacing:.01em}h1 span{color:var(--accent)}
+.by{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+.lang{display:flex;gap:6px;margin:16px 0 4px}.lang button{flex:1;border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:10px;padding:7px 0;font:600 14px system-ui;cursor:pointer}.lang button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+h2{font-size:19px;margin:18px 0 6px}p{margin:6px 0;color:var(--muted)}
+label{display:block;font-weight:600;font-size:14px;margin:14px 0 6px}
+input{width:100%;font:700 24px/1.2 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.18em;text-transform:uppercase;text-align:center;padding:14px 10px;border-radius:12px;border:1.5px solid var(--line);background:var(--bg);color:var(--ink)}
+input[type=password]{letter-spacing:normal;text-transform:none;font:600 18px system-ui;text-align:left}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+.btn{display:block;width:100%;margin-top:14px;border:0;border-radius:12px;padding:14px;background:var(--accent);color:#fff;font:700 17px system-ui;letter-spacing:.02em;cursor:pointer;text-align:center;text-decoration:none}.btn[disabled]{opacity:.6}
+.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.msg{margin-top:12px;padding:10px 12px;border-radius:10px;font-size:14.5px;display:none}.msg.err{display:block;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--ink)}.msg.ok{display:block;background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ink)}
+.small{font-size:13px}.link{background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:13.5px;padding:0;margin-top:16px}
+.pin{float:right;width:30px;height:38px}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="logo"><img src="icons/pc-128.png" alt=""><div><h1>Coach <span>Play Up</span></h1><div class="by">by Croby</div></div></div>
+  <div class="lang" role="group" aria-label="Lingua"><button data-l="it">Italiano</button><button data-l="en">English</button><button data-l="fil">Filipino</button></div>
+  <section id="sCode">
+    <h2 data-t="title"></h2>
+    <p data-t="intro"></p>
+    <label for="code" data-t="codeLbl"></label>
+    <input id="code" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="11" placeholder="XXXX-XXXX">
+    <button class="btn" id="go" data-t="go"></button>
+    <div class="msg" id="msg"></div>
+    <p class="small" data-t="once"></p>
+    <button class="link" id="toAdmin" data-t="owner"></button>
+  </section>
+  <section id="sAdmin" hidden>
+    <h2 data-t="ownerTitle"></h2>
+    <p data-t="ownerIntro"></p>
+    <label for="pw" data-t="pwLbl"></label>
+    <input id="pw" type="password" autocomplete="current-password">
+    <button class="btn" id="goAdmin" data-t="enter"></button>
+    <div class="msg" id="msgA"></div>
+    <button class="link" id="toCode" data-t="back"></button>
+  </section>
+  <section id="sOk" hidden>
+    <h2 data-t="okTitle"></h2>
+    <p id="okText"></p>
+    <p class="small" data-t="ios"></p>
+    <a class="btn" href="./" id="open" data-t="open"></a>
+  </section>
+</main>
+<script>
+const T = {
+  it: {title: 'Attiva la tua app', intro: 'Coach Play Up è riservata. Inserisci il codice di attivazione che ti ha mandato Croby.', codeLbl: 'Codice di attivazione', go: 'Attiva Coach Play Up', once: 'Ogni codice vale una volta sola e funziona solo su questo dispositivo. Se l’hai già usato, chiedine uno nuovo a Croby.', owner: 'Sei Croby? Entra come proprietario', ownerTitle: 'Accesso del proprietario', ownerIntro: 'Solo per Croby: con la password del proprietario questo dispositivo può usare l’app e creare i codici per i giocatori.', pwLbl: 'Password del proprietario', enter: 'Entra', back: '‹ Ho un codice di attivazione', okTitle: '✓ App attivata!', okUser: 'Benvenuto in Coach Play Up{0}. Questo dispositivo ora è attivato.', okAdmin: 'Ciao Croby: questo dispositivo è attivato come proprietario. Trovi il generatore di codici in “Dati e backup”.', ios: 'Su iPhone e iPad: se installi l’app sulla schermata Home (Condividi → Aggiungi alla schermata Home), aprila da lì e inserisci di nuovo lo stesso codice entro 30 minuti.', open: 'Apri Coach Play Up', empty: 'Scrivi il codice.', net: 'Nessuna connessione: per attivare l’app serve internet.', wait: 'Controllo…',
+    e: {'codice non valido': 'Codice non valido: controlla di averlo scritto bene.', 'codice scaduto: chiedine uno nuovo': 'Codice scaduto: chiedine uno nuovo a Croby.', 'codice già usato: ogni codice vale una volta sola': 'Codice già usato: ogni codice vale una volta sola. Chiedine uno nuovo a Croby.', 'troppi tentativi: riprova fra 15 minuti': 'Troppi tentativi: riprova fra 15 minuti.', 'password sbagliata': 'Password sbagliata.'}},
+  en: {title: 'Activate your app', intro: 'Coach Play Up is private. Enter the activation code Croby sent you.', codeLbl: 'Activation code', go: 'Activate Coach Play Up', once: 'Each code works only once and only on this device. If you have already used it, ask Croby for a new one.', owner: 'Are you Croby? Sign in as the owner', ownerTitle: 'Owner access', ownerIntro: 'For Croby only: with the owner password this device can use the app and create codes for players.', pwLbl: 'Owner password', enter: 'Sign in', back: '‹ I have an activation code', okTitle: '✓ App activated!', okUser: 'Welcome to Coach Play Up{0}. This device is now activated.', okAdmin: 'Hi Croby: this device is activated as the owner. You will find the code generator in “Data and backup”.', ios: 'On iPhone and iPad: if you install the app on the Home Screen (Share → Add to Home Screen), open it from there and enter the same code again within 30 minutes.', open: 'Open Coach Play Up', empty: 'Enter the code.', net: 'No connection: you need internet to activate the app.', wait: 'Checking…',
+    e: {'codice non valido': 'Invalid code: check that you typed it correctly.', 'codice scaduto: chiedine uno nuovo': 'Code expired: ask Croby for a new one.', 'codice già usato: ogni codice vale una volta sola': 'Code already used: each code works only once. Ask Croby for a new one.', 'troppi tentativi: riprova fra 15 minuti': 'Too many attempts: try again in 15 minutes.', 'password sbagliata': 'Wrong password.'}},
+  fil: {title: 'I-activate ang iyong app', intro: 'Pribado ang Coach Play Up. Ilagay ang activation code na ipinadala sa iyo ni Croby.', codeLbl: 'Activation code', go: 'I-activate ang Coach Play Up', once: 'Isang beses lang magagamit ang bawat code at sa device na ito lang. Kung nagamit mo na, humingi ng bago kay Croby.', owner: 'Ikaw ba si Croby? Pumasok bilang may-ari', ownerTitle: 'Access ng may-ari', ownerIntro: 'Para kay Croby lang: gamit ang password ng may-ari, magagamit ng device na ito ang app at makakagawa ng mga code para sa mga manlalaro.', pwLbl: 'Password ng may-ari', enter: 'Pumasok', back: '‹ May activation code ako', okTitle: '✓ Na-activate ang app!', okUser: 'Maligayang pagdating sa Coach Play Up{0}. Na-activate na ang device na ito.', okAdmin: 'Kumusta Croby: na-activate ang device na ito bilang may-ari. Makikita mo ang code generator sa “Data at backup”.', ios: 'Sa iPhone at iPad: kung ii-install mo ang app sa Home Screen (Share → Add to Home Screen), buksan ito roon at ilagay ulit ang parehong code sa loob ng 30 minuto.', open: 'Buksan ang Coach Play Up', empty: 'Ilagay ang code.', net: 'Walang koneksyon: kailangan ng internet para ma-activate ang app.', wait: 'Sinusuri…',
+    e: {'codice non valido': 'Hindi wastong code: tiyaking tama ang pagkakasulat.', 'codice scaduto: chiedine uno nuovo': 'Expired na ang code: humingi ng bago kay Croby.', 'codice già usato: ogni codice vale una volta sola': 'Nagamit na ang code: isang beses lang magagamit ang bawat code. Humingi ng bago kay Croby.', 'troppi tentativi: riprova fra 15 minuti': 'Masyadong maraming subok: subukan ulit pagkalipas ng 15 minuto.', 'password sbagliata': 'Maling password.'}}
+};
+const $ = s => document.querySelector(s), F = '/.netlify/functions/chiave';
+let L = (() => { try { const s = JSON.parse(localStorage.getItem('lang') || 'null'); if (T[s]) return s; } catch {} const n = (navigator.language || 'it').slice(0, 2); return n === 'it' ? 'it' : /^(fil|tl)$/.test(n) ? 'fil' : 'en'; })();
+const t = k => T[L][k] || T.it[k];
+function paint(){ document.documentElement.lang = L === 'fil' ? 'fil' : L; document.querySelectorAll('[data-t]').forEach(el => el.textContent = t(el.dataset.t)); document.querySelectorAll('.lang button').forEach(b => b.setAttribute('aria-pressed', b.dataset.l === L)); }
+document.querySelectorAll('.lang button').forEach(b => b.onclick = () => { L = b.dataset.l; try { localStorage.setItem('lang', JSON.stringify(L)); } catch {} paint(); });
+const say = (el, txt, ok) => { el.textContent = txt; el.className = 'msg ' + (ok ? 'ok' : 'err'); };
+const errTxt = e => (T[L].e || {})[e] || e;
+async function post(body){ const r = await fetch(F, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body), credentials: 'same-origin', cache: 'no-store'}); return r.json(); }
+function done(admin, nome){ $('#sCode').hidden = $('#sAdmin').hidden = true; $('#sOk').hidden = false; $('#okText').textContent = admin ? t('okAdmin') : t('okUser').replace('{0}', nome ? ', ' + nome : ''); }
+// codice nel link (…/attiva.html?c=ABCD-EFGH): si scrive da solo
+{ const c = new URLSearchParams(location.search).get('c'); if (c) $('#code').value = c.toUpperCase(); }
+$('#code').addEventListener('input', e => { let v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); if (v.length > 4) v = v.slice(0, 4) + '-' + v.slice(4); e.target.value = v; });
+$('#go').onclick = async () => {
+  const c = $('#code').value.trim(); if (!c){ say($('#msg'), t('empty')); return; }
+  const b = $('#go'); b.disabled = true; b.textContent = t('wait');
+  try { const j = await post({a: 'attiva', codice: c}); if (j.ok) done(false, j.nome); else say($('#msg'), errTxt(j.error || 'errore')); }
+  catch { say($('#msg'), t('net')); }
+  finally { b.disabled = false; b.textContent = t('go'); }
+};
+$('#code').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
+$('#toAdmin').onclick = () => { $('#sCode').hidden = true; $('#sAdmin').hidden = false; $('#pw').focus(); };
+$('#toCode').onclick = () => { $('#sAdmin').hidden = true; $('#sCode').hidden = false; };
+$('#goAdmin').onclick = async () => {
+  const b = $('#goAdmin'); b.disabled = true;
+  try { const j = await post({a: 'admin', password: $('#pw').value}); if (j.ok) done(true); else say($('#msgA'), errTxt(j.error || 'errore')); }
+  catch { say($('#msgA'), t('net')); }
+  finally { b.disabled = false; }
+};
+$('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#goAdmin').click(); });
+paint();
+// già attivato? allora si va direttamente all'app
+fetch(F + '?a=stato&_=' + Date.now(), {cache: 'no-store', credentials: 'same-origin'}).then(r => r.json()).then(j => { if (j.attivo || j.lucchetto === false) location.replace('./'); }).catch(() => {});
+</script>
+</body>
+</html>

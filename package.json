@@ -1,0 +1,8 @@
+{
+  "name": "coach-play-up",
+  "private": true,
+  "description": "Coach Play Up by Croby – sito Netlify",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}
