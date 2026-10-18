@@ -41,7 +41,10 @@ export default async (req) => {
     if (a === 'stato'){
       if (!me) return out({ok: false, attivo: false, lucchetto: true});
       const st = await load(), dv = st.dispositivi[me.d];
-      if (me.r !== 'a' && (!dv || dv.bloccato)) return out({ok: false, attivo: false, bloccato: !!dv?.bloccato, lucchetto: true}, 200, delCookie);
+      if (me.r !== 'a' && dv && dv.codice && st.codici[dv.codice]?.bloccato) dv.bloccato = true;   // giocatore bloccato: tutti i suoi dispositivi
+      // bloccato: l'app non si apre, ma la chiave resta sul dispositivo così con “Sblocca” torna a funzionare senza un codice nuovo
+      if (me.r !== 'a' && dv?.bloccato) return out({ok: false, attivo: false, bloccato: true, lucchetto: true});
+      if (me.r !== 'a' && !dv) return out({ok: false, attivo: false, lucchetto: true}, 200, delCookie);
       if (dv){ dv.visto = Date.now(); await save(st); }
       return out({ok: true, attivo: true, admin: me.r === 'a', nome: me.n || '', lucchetto: true}, 200, setCookie(await sign(me, admin)));   // la chiave si rinnova a ogni apertura
     }
@@ -59,7 +62,7 @@ export default async (req) => {
     if (a === 'attiva'){
       if (tooMany) return out({ok: false, error: 'troppi tentativi: riprova fra 15 minuti'}, 429);
       const code = normCode(body.codice), c = st.codici[code];
-      if (!c || c.revocato) return fail('codice non valido');
+      if (!c || c.revocato || c.bloccato) return fail('codice non valido');
       if (c.scade && now > c.scade && !c.usi?.length) return fail('codice scaduto: chiedine uno nuovo');
       const usi = c.usi || [];
       if (usi.length && (now - usi[0] > 30 * 60e3 || usi.length >= 2)) return fail('codice già usato: ogni codice vale una volta sola');
@@ -77,9 +80,16 @@ export default async (req) => {
       return out({ok: true, codice: code.slice(0, 4) + '-' + code.slice(4), scade: st.codici[code].scade, nome: st.codici[code].nome});
     }
     if (a === 'lista'){
-      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato}));
-      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, admin: !!d.admin, at: d.at, visto: d.visto || null, ua: d.ua, bloccato: !!d.bloccato, questo: d.id === me.d}));
+      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato}));
+      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: d.visto || null, ua: d.ua, bloccato: !!d.bloccato, questo: d.id === me.d}));
       return out({ok: true, codici, dispositivi});
+    }
+    // blocca / sblocca un giocatore: tutti i dispositivi attivati con il suo codice
+    if (a === 'bloccaGiocatore' || a === 'sbloccaGiocatore'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      const on = a === 'bloccaGiocatore'; c.bloccato = on; let n = 0;
+      for (const d of Object.values(st.dispositivi)) if (d.codice === c.codice && !d.admin){ d.bloccato = on; n++; }
+      await save(st); return out({ok: true, dispositivi: n});
     }
     if (a === 'blocca' || a === 'sblocca'){
       const d = st.dispositivi[body.id]; if (!d) return out({ok: false, error: 'dispositivo non trovato'}, 404);
