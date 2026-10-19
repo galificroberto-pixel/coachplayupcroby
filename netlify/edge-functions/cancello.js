@@ -25,9 +25,10 @@ export default async (req, context) => {
   const u = new URL(req.url);
   if (OPEN.some(r => r.test(u.pathname))) return;
   const t = await verifyToken(cookieOf(req, 'cpu_key'), admin);
-  if (t) return;                                        // dispositivo attivato: avanti
+  const scaduto = t && t.r !== 'a' && t.f && Date.now() > t.f;      // accesso finito: serve un codice nuovo di Croby
+  if (t && !scaduto) return;                                        // dispositivo attivato e nel periodo: avanti
   const html = req.method === 'GET' && (u.pathname === '/' || u.pathname.endsWith('.html') || (req.headers.get('accept') || '').includes('text/html'));
-  if (html) return Response.redirect(new URL('/attiva.html', u), 302);
-  return new Response(JSON.stringify({error: 'app bloccata: serve il codice di attivazione'}), {status: 401, headers: {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store'}});
+  if (html) return Response.redirect(new URL(scaduto ? '/attiva.html?scaduto=1' : '/attiva.html', u), 302);
+  return new Response(JSON.stringify({error: scaduto ? 'accesso scaduto: serve un nuovo codice' : 'app bloccata: serve il codice di attivazione'}), {status: 401, headers: {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store'}});
 };
 export const config = {path: '/*'};

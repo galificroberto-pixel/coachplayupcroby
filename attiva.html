@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Coach Play Up · Attivazione</title>
-<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-title" content="Coach Play Up">
+<script>if (!(/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1))) document.write('<link rel="manifest" href="manifest.webmanifest">');</script>
 <link rel="icon" href="icons/pc-32.png">
 <link rel="apple-touch-icon" href="icons/iphone-180.png">
 <meta name="theme-color" content="#C21F32">
@@ -30,6 +31,23 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px}
 .msg{margin-top:12px;padding:10px 12px;border-radius:10px;font-size:14.5px;display:none}.msg.err{display:block;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--ink)}.msg.ok{display:block;background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ink)}
 .small{font-size:13px}.link{background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:13.5px;padding:0;margin-top:16px}
 .pin{float:right;width:30px;height:38px}
+/* guida iPhone: disegni dei tocchi */
+.ios{margin-top:4px}.ios h2{color:var(--accent)}
+.steps{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:12px;counter-reset:st}
+.steps li{counter-increment:st;border:1.5px solid var(--line);border-radius:14px;padding:10px 12px 12px;background:var(--bg)}
+.steps li>b{display:flex;gap:10px;align-items:flex-start;color:var(--ink);font-size:15.5px;line-height:1.35}
+.steps li>b::before{content:counter(st);flex:0 0 28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;font:800 15px system-ui}
+.steps svg{display:block;width:100%;height:auto;margin-top:8px;border-radius:10px}
+.codebox{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-top:14px;padding:10px 12px;border-radius:12px;border:1.5px dashed var(--accent)}
+.codebox span{font-size:13px;color:var(--muted)}.codebox b{display:block;font:800 22px ui-monospace,Menlo,monospace;letter-spacing:.12em;color:var(--ink)}
+.mini{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:10px;padding:9px 12px;font:600 14.5px system-ui;cursor:pointer;white-space:nowrap}
+.warn{margin-top:12px;padding:10px 12px;border-radius:10px;background:#FFF1D6;color:#5a3b00;border:1px solid #E0A33B;font-size:14px}
+.arrow{position:fixed;z-index:9;font-size:58px;line-height:1;color:var(--accent);-webkit-text-stroke:2px #fff;text-shadow:0 0 14px rgba(0,0,0,.5);pointer-events:none;animation:ab 1s ease-in-out infinite}
+.arrow.bottom{left:50%;bottom:max(4px,env(safe-area-inset-bottom));margin-left:-22px}.arrow.bottomright{right:14px;bottom:max(4px,env(safe-area-inset-bottom))}.arrow.top{right:18px;top:max(4px,env(safe-area-inset-top));animation-name:at}
+@keyframes ab{0%,100%{translate:0 0}50%{translate:0 10px}}@keyframes at{0%,100%{translate:0 0}50%{translate:0 -10px}}
+@media (prefers-reduced-motion:reduce){.arrow{animation:none}}
+.hint{margin-top:10px;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ink);font-weight:600;font-size:15px}
+.row{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -41,6 +59,8 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px}
     <p data-t="intro"></p>
     <label for="code" data-t="codeLbl"></label>
     <input id="code" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="11" placeholder="XXXX-XXXX">
+    <div class="row" id="pasteRow" hidden><button class="mini" id="paste" data-t="paste"></button></div>
+    <p class="hint" id="lastStep" hidden data-t="lastStep"></p>
     <button class="btn" id="go" data-t="go"></button>
     <div class="msg" id="msg"></div>
     <p class="small" data-t="once"></p>
@@ -60,33 +80,38 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px}
     <p id="okText"></p>
     <p class="small" data-t="ios"></p>
     <a class="btn" href="./" id="open" data-t="open"></a>
+    <button class="btn" id="andInst" hidden data-t="andInst"></button>
   </section>
+  <section id="sIos" class="ios" hidden></section>
 </main>
 <script>
 const T = {
-  it: {blocked: 'Questo dispositivo è stato bloccato da Croby. Per riaverlo chiedi a Croby di sbloccarti.', iosAdmin: 'Su iPhone e iPad: se usi l’app installata sulla schermata Home, aprila da lì e rientra con la tua password da proprietario.', title: 'Attiva la tua app', intro: 'Coach Play Up è riservata. Inserisci il codice di attivazione che ti ha mandato Croby.', codeLbl: 'Codice di attivazione', go: 'Attiva Coach Play Up', once: 'Ogni codice vale una volta sola e funziona solo su questo dispositivo. Se l’hai già usato, chiedine uno nuovo a Croby.', owner: 'Sei Croby? Entra come proprietario', ownerTitle: 'Accesso del proprietario', ownerIntro: 'Solo per Croby: con la password del proprietario questo dispositivo può usare l’app e creare i codici per i giocatori.', pwLbl: 'Password del proprietario', enter: 'Entra', back: '‹ Ho un codice di attivazione', okTitle: '✓ App attivata!', okUser: 'Benvenuto in Coach Play Up{0}. Questo dispositivo ora è attivato.', okAdmin: 'Ciao Croby: questo dispositivo è attivato come proprietario. Trovi il generatore di codici in “Dati e backup”.', ios: 'Su iPhone e iPad: se installi l’app sulla schermata Home (Condividi → Aggiungi alla schermata Home), aprila da lì e inserisci di nuovo lo stesso codice entro 30 minuti.', open: 'Apri Coach Play Up', empty: 'Scrivi il codice.', net: 'Nessuna connessione: per attivare l’app serve internet.', wait: 'Controllo…',
+  it: {expired: 'Il tuo accesso a Coach Play Up è scaduto{0}. I tuoi dati sono al sicuro su questo dispositivo: chiedi a Croby un nuovo codice e inseriscilo qui sotto per ritrovare tutto.', renew: 'Inserisci il nuovo codice che ti ha mandato Croby: il tempo si aggiunge a quello che ti resta.', until: 'Accesso valido fino al {0}.', renewed: 'Rinnovo fatto!', blocked: 'Questo dispositivo è stato bloccato da Croby. Per riaverlo chiedi a Croby di sbloccarti.', iosAdmin: 'Su iPhone e iPad: se usi l’app installata sulla schermata Home, aprila da lì e rientra con la tua password da proprietario.', title: 'Attiva la tua app', intro: 'Coach Play Up è riservata. Inserisci il codice di attivazione che ti ha mandato Croby.', codeLbl: 'Codice di attivazione', go: 'Attiva Coach Play Up', once: 'Ogni codice vale una volta sola e funziona solo su questo dispositivo. Se l’hai già usato, chiedine uno nuovo a Croby.', owner: 'Sei Croby? Entra come proprietario', ownerTitle: 'Accesso del proprietario', ownerIntro: 'Solo per Croby: con la password del proprietario questo dispositivo può usare l’app e creare i codici per i giocatori.', pwLbl: 'Password del proprietario', enter: 'Entra', back: '‹ Ho un codice di attivazione', okTitle: '✓ App attivata!', okUser: 'Benvenuto in Coach Play Up{0}. Questo dispositivo ora è attivato.', okAdmin: 'Ciao Croby: questo dispositivo è attivato come proprietario. Trovi il generatore di codici in “Dati e backup”.', ios: 'Adesso installa l’app sulla schermata Home seguendo i disegni qui sotto. Quando la apri dall’icona, se ti chiede il codice è già scritto: premi “Attiva” (entro 24 ore).', open: 'Apri Coach Play Up', empty: 'Scrivi il codice.', net: 'Nessuna connessione: per attivare l’app serve internet.', wait: 'Controllo…',
     e: {'codice non valido': 'Codice non valido: controlla di averlo scritto bene.', 'codice scaduto: chiedine uno nuovo': 'Codice scaduto: chiedine uno nuovo a Croby.', 'codice già usato: ogni codice vale una volta sola': 'Codice già usato: ogni codice vale una volta sola. Chiedine uno nuovo a Croby.', 'troppi tentativi: riprova fra 15 minuti': 'Troppi tentativi: riprova fra 15 minuti.', 'password sbagliata': 'Password sbagliata.'}},
-  en: {blocked: 'This device has been blocked by Croby. Ask Croby to unblock you to use it again.', iosAdmin: 'On iPhone and iPad: if you use the app installed on the Home Screen, open it from there and sign in again with your owner password.', title: 'Activate your app', intro: 'Coach Play Up is private. Enter the activation code Croby sent you.', codeLbl: 'Activation code', go: 'Activate Coach Play Up', once: 'Each code works only once and only on this device. If you have already used it, ask Croby for a new one.', owner: 'Are you Croby? Sign in as the owner', ownerTitle: 'Owner access', ownerIntro: 'For Croby only: with the owner password this device can use the app and create codes for players.', pwLbl: 'Owner password', enter: 'Sign in', back: '‹ I have an activation code', okTitle: '✓ App activated!', okUser: 'Welcome to Coach Play Up{0}. This device is now activated.', okAdmin: 'Hi Croby: this device is activated as the owner. You will find the code generator in “Data and backup”.', ios: 'On iPhone and iPad: if you install the app on the Home Screen (Share → Add to Home Screen), open it from there and enter the same code again within 30 minutes.', open: 'Open Coach Play Up', empty: 'Enter the code.', net: 'No connection: you need internet to activate the app.', wait: 'Checking…',
+  en: {expired: 'Your access to Coach Play Up has expired{0}. Your data is safe on this device: ask Croby for a new code and enter it below to get everything back.', renew: 'Enter the new code Croby sent you: the time is added to what you have left.', until: 'Access valid until {0}.', renewed: 'Renewal done!', blocked: 'This device has been blocked by Croby. Ask Croby to unblock you to use it again.', iosAdmin: 'On iPhone and iPad: if you use the app installed on the Home Screen, open it from there and sign in again with your owner password.', title: 'Activate your app', intro: 'Coach Play Up is private. Enter the activation code Croby sent you.', codeLbl: 'Activation code', go: 'Activate Coach Play Up', once: 'Each code works only once and only on this device. If you have already used it, ask Croby for a new one.', owner: 'Are you Croby? Sign in as the owner', ownerTitle: 'Owner access', ownerIntro: 'For Croby only: with the owner password this device can use the app and create codes for players.', pwLbl: 'Owner password', enter: 'Sign in', back: '‹ I have an activation code', okTitle: '✓ App activated!', okUser: 'Welcome to Coach Play Up{0}. This device is now activated.', okAdmin: 'Hi Croby: this device is activated as the owner. You will find the code generator in “Data and backup”.', ios: 'Now install the app on the Home Screen by following the pictures below. When you open it from the icon, if it asks for the code it is already filled in: press “Activate” (within 24 hours).', open: 'Open Coach Play Up', empty: 'Enter the code.', net: 'No connection: you need internet to activate the app.', wait: 'Checking…',
     e: {'codice non valido': 'Invalid code: check that you typed it correctly.', 'codice scaduto: chiedine uno nuovo': 'Code expired: ask Croby for a new one.', 'codice già usato: ogni codice vale una volta sola': 'Code already used: each code works only once. Ask Croby for a new one.', 'troppi tentativi: riprova fra 15 minuti': 'Too many attempts: try again in 15 minutes.', 'password sbagliata': 'Wrong password.'}},
-  fil: {blocked: 'Na-block ni Croby ang device na ito. Hilingin kay Croby na i-unblock ka para magamit ulit.', iosAdmin: 'Sa iPhone at iPad: kung ginagamit mo ang app na naka-install sa Home Screen, buksan ito roon at pumasok ulit gamit ang password mo bilang may-ari.', title: 'I-activate ang iyong app', intro: 'Pribado ang Coach Play Up. Ilagay ang activation code na ipinadala sa iyo ni Croby.', codeLbl: 'Activation code', go: 'I-activate ang Coach Play Up', once: 'Isang beses lang magagamit ang bawat code at sa device na ito lang. Kung nagamit mo na, humingi ng bago kay Croby.', owner: 'Ikaw ba si Croby? Pumasok bilang may-ari', ownerTitle: 'Access ng may-ari', ownerIntro: 'Para kay Croby lang: gamit ang password ng may-ari, magagamit ng device na ito ang app at makakagawa ng mga code para sa mga manlalaro.', pwLbl: 'Password ng may-ari', enter: 'Pumasok', back: '‹ May activation code ako', okTitle: '✓ Na-activate ang app!', okUser: 'Maligayang pagdating sa Coach Play Up{0}. Na-activate na ang device na ito.', okAdmin: 'Kumusta Croby: na-activate ang device na ito bilang may-ari. Makikita mo ang code generator sa “Data at backup”.', ios: 'Sa iPhone at iPad: kung ii-install mo ang app sa Home Screen (Share → Add to Home Screen), buksan ito roon at ilagay ulit ang parehong code sa loob ng 30 minuto.', open: 'Buksan ang Coach Play Up', empty: 'Ilagay ang code.', net: 'Walang koneksyon: kailangan ng internet para ma-activate ang app.', wait: 'Sinusuri…',
+  fil: {expired: 'Nag-expire na ang access mo sa Coach Play Up{0}. Ligtas ang datos mo sa device na ito: humingi kay Croby ng bagong code at ilagay ito sa ibaba para maibalik ang lahat.', renew: 'Ilagay ang bagong code na ipinadala ni Croby: idadagdag ang oras sa natitira mo.', until: 'May bisa ang access hanggang {0}.', renewed: 'Tapos na ang renewal!', blocked: 'Na-block ni Croby ang device na ito. Hilingin kay Croby na i-unblock ka para magamit ulit.', iosAdmin: 'Sa iPhone at iPad: kung ginagamit mo ang app na naka-install sa Home Screen, buksan ito roon at pumasok ulit gamit ang password mo bilang may-ari.', title: 'I-activate ang iyong app', intro: 'Pribado ang Coach Play Up. Ilagay ang activation code na ipinadala sa iyo ni Croby.', codeLbl: 'Activation code', go: 'I-activate ang Coach Play Up', once: 'Isang beses lang magagamit ang bawat code at sa device na ito lang. Kung nagamit mo na, humingi ng bago kay Croby.', owner: 'Ikaw ba si Croby? Pumasok bilang may-ari', ownerTitle: 'Access ng may-ari', ownerIntro: 'Para kay Croby lang: gamit ang password ng may-ari, magagamit ng device na ito ang app at makakagawa ng mga code para sa mga manlalaro.', pwLbl: 'Password ng may-ari', enter: 'Pumasok', back: '‹ May activation code ako', okTitle: '✓ Na-activate ang app!', okUser: 'Maligayang pagdating sa Coach Play Up{0}. Na-activate na ang device na ito.', okAdmin: 'Kumusta Croby: na-activate ang device na ito bilang may-ari. Makikita mo ang code generator sa “Data at backup”.', ios: 'Ngayon i-install ang app sa Home Screen ayon sa mga larawan sa ibaba. Kapag binuksan mo ito mula sa icon at hiningi ang code, nakasulat na ito: pindutin ang “I-activate” (sa loob ng 24 oras).', open: 'Buksan ang Coach Play Up', empty: 'Ilagay ang code.', net: 'Walang koneksyon: kailangan ng internet para ma-activate ang app.', wait: 'Sinusuri…',
     e: {'codice non valido': 'Hindi wastong code: tiyaking tama ang pagkakasulat.', 'codice scaduto: chiedine uno nuovo': 'Expired na ang code: humingi ng bago kay Croby.', 'codice già usato: ogni codice vale una volta sola': 'Nagamit na ang code: isang beses lang magagamit ang bawat code. Humingi ng bago kay Croby.', 'troppi tentativi: riprova fra 15 minuti': 'Masyadong maraming subok: subukan ulit pagkalipas ng 15 minuto.', 'password sbagliata': 'Maling password.'}}
 };
-const $ = s => document.querySelector(s), F = '/.netlify/functions/chiave';
+const $ = s => document.querySelector(s), F = '/.netlify/functions/chiave', Q0 = new URLSearchParams(location.search);
 let L = (() => { try { const s = JSON.parse(localStorage.getItem('lang') || 'null'); if (T[s]) return s; } catch {} const n = (navigator.language || 'it').slice(0, 2); return n === 'it' ? 'it' : /^(fil|tl)$/.test(n) ? 'fil' : 'en'; })();
 const t = k => T[L][k] || T.it[k];
 function paint(){ document.documentElement.lang = L === 'fil' ? 'fil' : L; document.querySelectorAll('[data-t]').forEach(el => el.textContent = t(el.dataset.t)); document.querySelectorAll('.lang button').forEach(b => b.setAttribute('aria-pressed', b.dataset.l === L)); }
-document.querySelectorAll('.lang button').forEach(b => b.onclick = () => { L = b.dataset.l; try { localStorage.setItem('lang', JSON.stringify(L)); } catch {} paint(); });
+document.querySelectorAll('.lang button').forEach(b => b.onclick = () => { L = b.dataset.l; try { localStorage.setItem('lang', JSON.stringify(L)); } catch {} paint(); if (IOS_MODE) iosGuide(); });
 const say = (el, txt, ok) => { el.textContent = txt; el.className = 'msg ' + (ok ? 'ok' : 'err'); };
 const errTxt = e => (T[L].e || {})[e] || e;
 async function post(body){ const r = await fetch(F, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body), credentials: 'same-origin', cache: 'no-store'}); return r.json(); }
-function done(admin, nome){ $('#sCode').hidden = $('#sAdmin').hidden = true; $('#sOk').hidden = false; $('#okText').textContent = admin ? t('okAdmin') : t('okUser').replace('{0}', nome ? ', ' + nome : ''); document.querySelector('[data-t=ios]').textContent = admin ? t('iosAdmin') : t('ios'); }
+const dt = ms => new Date(ms).toLocaleDateString(L === 'fil' ? 'fil-PH' : L === 'en' ? 'en-GB' : 'it-IT', {day: 'numeric', month: 'long', year: 'numeric'});
+function done(admin, nome, fino, rinnovo){ $('#sCode').hidden = $('#sAdmin').hidden = true; $('#sOk').hidden = false; $('#okText').textContent = (rinnovo ? t('renewed') + ' ' : '') + (admin ? t('okAdmin') : t('okUser').replace('{0}', nome ? ', ' + nome : '')) + (fino ? ' ' + t('until').replace('{0}', dt(fino)) : ''); const iosEl = document.querySelector('[data-t=ios]'); iosEl.hidden = !IS_IOS || SA; iosEl.textContent = admin ? t('iosAdmin') : t('ios');
+  if (IS_IOS && !SA){ const c = CODE(); if (!admin && c) try { history.replaceState(null, '', 'attiva.html?c=' + encodeURIComponent(c)); } catch {} iosGuide('post'); }
+  else { iosGuide(''); showArrow(false); if (BIP) $('#andInst').hidden = false; } }
 // codice nel link (…/attiva.html?c=ABCD-EFGH): si scrive da solo
 { const c = new URLSearchParams(location.search).get('c'); if (c) $('#code').value = c.toUpperCase(); }
 $('#code').addEventListener('input', e => { let v = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); if (v.length > 4) v = v.slice(0, 4) + '-' + v.slice(4); e.target.value = v; });
 $('#go').onclick = async () => {
   const c = $('#code').value.trim(); if (!c){ say($('#msg'), t('empty')); return; }
   const b = $('#go'); b.disabled = true; b.textContent = t('wait');
-  try { const j = await post({a: 'attiva', codice: c}); if (j.ok) done(false, j.nome); else say($('#msg'), errTxt(j.error || 'errore')); }
+  try { const j = await post({a: 'attiva', codice: c}); if (j.ok){ done(false, j.nome, j.fino, j.rinnovo); if (j.rinnovo) setTimeout(() => location.replace('./'), 2500); } else say($('#msg'), errTxt(j.error || 'errore')); }
   catch { say($('#msg'), t('net')); }
   finally { b.disabled = false; b.textContent = t('go'); }
 };
@@ -100,9 +125,108 @@ $('#goAdmin').onclick = async () => {
   finally { b.disabled = false; }
 };
 $('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') $('#goAdmin').click(); });
+
+/* ---------- iPhone e iPad: prima si installa, poi si attiva dall'icona (il codice resta scritto nel link) ---------- */
+Object.assign(T.it, {iosTitle: '📲 Su iPhone: prima installa l’app', iosIntro: 'Bastano pochi tocchi: segui i disegni. Poi apri l’app dall’icona: il codice è già scritto, premi solo “Attiva”.', iosIntroApp: 'Segui i disegni: in un minuto Coach Play Up è sulla schermata Home come le altre app.',
+  s1: 'Tocca il pulsante Condividi in basso, al centro (il quadrato con la freccia ↑).', s1top: 'Tocca il pulsante Condividi in alto a destra (il quadrato con la freccia ↑).', s1v26: 'Tocca il pulsante ⋯ (tre puntini) in basso a destra, poi “Condividi”.',
+  s2: 'Scorri in basso e tocca “Aggiungi alla schermata Home”. Se non la vedi, tocca “Altro”.', s3: 'Tocca “Aggiungi” in alto a destra.', s3v26: 'Lascia acceso “Apri come app web” e tocca “Aggiungi”.',
+  s4: 'Chiudi Safari, tocca l’icona Coach Play Up sulla schermata Home e premi “Attiva Coach Play Up”.', s4ok: 'Tocca l’icona Coach Play Up sulla schermata Home. Se ti chiede il codice è già scritto: premi “Attiva”.',
+  inapp: 'Sei dentro un’altra app (Instagram, Facebook, Telegram…): da qui non si può installare. Tocca ⋯ (o la bussola) e scegli “Apri in Safari”, oppure copia il link e incollalo in Safari.', copyLink: '📋 Copia il link', yourCode: 'Il tuo codice (se l’app te lo chiede):', copy: '📋 Copia', copied: '✓ Copiato', paste: '📋 Incolla il codice',
+  noInst: 'Non riesco a installarla: attivala qui in Safari', backApp: '‹ Torna all’app', lastStep: '✓ App installata! Ultimo passo: premi “Attiva Coach Play Up”.', dataNote: 'I dati che hai salvato in Safari non passano da soli nell’app installata: se ne hai, prima torna all’app e premi “💾 Salva il backup”, poi nell’app installata premi “♻️ Ripristina da backup”.',
+  andInst: '📲 Installa l’app sul telefono', L: {share: 'Condividi', home: 'Aggiungi alla schermata Home', add: 'Aggiungi', cancel: 'Annulla', web: 'Apri come app web', copyL: 'Copia', fav: 'Aggiungi ai preferiti', more: 'Altro'}});
+Object.assign(T.en, {iosTitle: '📲 On iPhone: install the app first', iosIntro: 'Just a few taps: follow the pictures. Then open the app from its icon: the code is already filled in, just press “Activate”.', iosIntroApp: 'Follow the pictures: in one minute Coach Play Up is on your Home Screen like your other apps.',
+  s1: 'Tap the Share button at the bottom centre (the square with the ↑ arrow).', s1top: 'Tap the Share button at the top right (the square with the ↑ arrow).', s1v26: 'Tap the ⋯ button (three dots) at the bottom right, then “Share”.',
+  s2: 'Scroll down and tap “Add to Home Screen”. If you cannot see it, tap “More”.', s3: 'Tap “Add” at the top right.', s3v26: 'Leave “Open as Web App” on and tap “Add”.',
+  s4: 'Close Safari, tap the Coach Play Up icon on the Home Screen and press “Activate Coach Play Up”.', s4ok: 'Tap the Coach Play Up icon on the Home Screen. If it asks for the code it is already filled in: press “Activate”.',
+  inapp: 'You are inside another app (Instagram, Facebook, Telegram…): you cannot install from here. Tap ⋯ (or the compass) and choose “Open in Safari”, or copy the link and paste it into Safari.', copyLink: '📋 Copy the link', yourCode: 'Your code (if the app asks for it):', copy: '📋 Copy', copied: '✓ Copied', paste: '📋 Paste the code',
+  noInst: 'I cannot install it: activate it here in Safari', backApp: '‹ Back to the app', lastStep: '✓ App installed! Last step: press “Activate Coach Play Up”.', dataNote: 'Data saved in Safari does not move by itself into the installed app: if you have some, first go back to the app and press “💾 Save the backup”, then in the installed app press “♻️ Restore from backup”.',
+  andInst: '📲 Install the app on your phone', L: {share: 'Share', home: 'Add to Home Screen', add: 'Add', cancel: 'Cancel', web: 'Open as Web App', copyL: 'Copy', fav: 'Add to Favorites', more: 'More'}});
+Object.assign(T.fil, {iosTitle: '📲 Sa iPhone: i-install muna ang app', iosIntro: 'Ilang tap lang: sundin ang mga larawan. Pagkatapos buksan ang app mula sa icon: nakasulat na ang code, pindutin lang ang “I-activate”.', iosIntroApp: 'Sundin ang mga larawan: sa isang minuto nasa Home Screen na ang Coach Play Up gaya ng ibang app.',
+  s1: 'I-tap ang Share button sa ibaba, sa gitna (ang parisukat na may arrow ↑).', s1top: 'I-tap ang Share button sa kanang itaas (ang parisukat na may arrow ↑).', s1v26: 'I-tap ang ⋯ button (tatlong tuldok) sa kanang ibaba, pagkatapos “Share”.',
+  s2: 'Mag-scroll pababa at i-tap ang “Add to Home Screen”. Kung hindi mo makita, i-tap ang “More”.', s3: 'I-tap ang “Add” sa kanang itaas.', s3v26: 'Iwanang naka-on ang “Open as Web App” at i-tap ang “Add”.',
+  s4: 'Isara ang Safari, i-tap ang icon ng Coach Play Up sa Home Screen at pindutin ang “I-activate ang Coach Play Up”.', s4ok: 'I-tap ang icon ng Coach Play Up sa Home Screen. Kung hihingin ang code, nakasulat na ito: pindutin ang “I-activate”.',
+  inapp: 'Nasa loob ka ng ibang app (Instagram, Facebook, Telegram…): hindi makakapag-install dito. I-tap ang ⋯ (o ang compass) at piliin ang “Open in Safari”, o kopyahin ang link at i-paste sa Safari.', copyLink: '📋 Kopyahin ang link', yourCode: 'Ang code mo (kung hihingin ng app):', copy: '📋 Kopyahin', copied: '✓ Nakopya', paste: '📋 I-paste ang code',
+  noInst: 'Hindi ko ma-install: i-activate dito sa Safari', backApp: '‹ Bumalik sa app', lastStep: '✓ Na-install ang app! Huling hakbang: pindutin ang “I-activate ang Coach Play Up”.', dataNote: 'Hindi kusang lilipat sa naka-install na app ang datos na naka-save sa Safari: kung mayroon ka, bumalik muna sa app at pindutin ang “💾 I-save ang backup”, pagkatapos sa naka-install na app pindutin ang “♻️ I-restore mula sa backup”.',
+  andInst: '📲 I-install ang app sa telepono', L: {share: 'Share', home: 'Add to Home Screen', add: 'Add', cancel: 'Cancel', web: 'Open as Web App', copyL: 'Copy', fav: 'Add to Favorites', more: 'More'}});
+const UA = navigator.userAgent || '';
+const IS_IOS = /iPad|iPhone|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_IPAD = /iPad/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const SA = !!(navigator.standalone || window.matchMedia?.('(display-mode: standalone)').matches);
+const IN_APP = /FBAN|FBAV|Instagram|Line\/|Twitter|TikTok|Snapchat|GSA\/|Telegram/i.test(UA);
+const BR = IN_APP ? 'inapp' : /CriOS|EdgiOS|FxiOS/.test(UA) ? 'other' : 'safari';
+const V26 = +((UA.match(/Version\/(\d+)/) || [])[1] || 0) >= 26 || +((UA.match(/OS (\d+)_/) || [])[1] || 0) >= 26;
+const TOP = IS_IPAD || BR === 'other';
+const esc = x => String(x).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+// disegni stilizzati dei pulsanti di iPhone (si adattano alla lingua)
+const RING = '#E8314B';
+const svg = (h, body) => `<svg viewBox="0 0 300 ${h}" role="img" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><rect width="300" height="${h}" rx="12" fill="#F2F3F7"/>${body}</svg>`;
+const shareIco = (x, y, c = '#0A84FF') => `<g transform="translate(${x} ${y})" fill="none" stroke="${c}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M-7 -2v11h14v-11"/><path d="M0 -12v14M-5 -7l5-5 5 5"/></g>`;
+const ring = (x, y, r = 19) => `<circle cx="${x}" cy="${y}" r="${r}" fill="none" stroke="${RING}" stroke-width="3.5"><animate attributeName="r" values="${r};${r + 4};${r}" dur="1.2s" repeatCount="indefinite"/></circle>`;
+function draw1(){
+  const L = T[L_()].L || T.it.L;
+  if (TOP) return svg(70, `<rect x="10" y="14" width="210" height="40" rx="12" fill="#fff"/><text x="24" y="39" font-size="14" fill="#8E8E93" font-family="system-ui">coachplayupcroby…</text>${shareIco(258, 36)}${ring(258, 34)}`);
+  if (V26) return svg(150, `<rect x="10" y="98" width="196" height="40" rx="20" fill="#fff"/><text x="28" y="123" font-size="14" fill="#8E8E93" font-family="system-ui">coachplayupcroby…</text><circle cx="258" cy="118" r="20" fill="#fff"/><text x="258" y="124" text-anchor="middle" font-size="22" font-weight="800" fill="#1C1C1E" font-family="system-ui">⋯</text>${ring(258, 118, 23)}
+    <rect x="128" y="12" width="160" height="70" rx="14" fill="#fff" stroke="#D1D1D6"/><text x="146" y="40" font-size="14" fill="#1C1C1E" font-family="system-ui">${esc(L.share)}</text>${shareIco(268, 36)}<line x1="140" y1="54" x2="282" y2="54" stroke="#E5E5EA"/><text x="146" y="72" font-size="13" fill="#8E8E93" font-family="system-ui">…</text><rect x="134" y="18" width="148" height="30" rx="8" fill="none" stroke="${RING}" stroke-width="3"/>`);
+  return svg(70, `<rect x="0" y="14" width="300" height="56" fill="#fff"/><text x="30" y="49" font-size="24" fill="#0A84FF" font-family="system-ui">‹</text><text x="86" y="49" font-size="24" fill="#C7C7CC" font-family="system-ui">›</text>${shareIco(150, 42)}${ring(150, 40)}<g fill="none" stroke="#0A84FF" stroke-width="2.2"><path d="M204 32h18v18h-18zM208 32v18"/><rect x="254" y="30" width="16" height="16" rx="3"/><rect x="258" y="34" width="16" height="16" rx="3"/></g>`);
+}
+function draw2(){
+  const L = T[L_()].L || T.it.L, row = (y, txt, ico, hi) => `<rect x="12" y="${y}" width="276" height="34" rx="0" fill="#fff"/><text x="26" y="${y + 22}" font-size="14" fill="#1C1C1E" font-family="system-ui" font-weight="${hi ? 700 : 400}">${esc(txt)}</text>${ico}${hi ? `<rect x="14" y="${y + 2}" width="272" height="30" rx="8" fill="none" stroke="${RING}" stroke-width="3"/>` : ''}`;
+  return svg(132, `<rect x="12" y="10" width="276" height="112" rx="12" fill="#fff"/>${row(14, L.copyL, `<g transform="translate(266 31)" fill="none" stroke="#1C1C1E" stroke-width="1.8"><rect x="-7" y="-5" width="10" height="12" rx="2"/><rect x="-3" y="-9" width="10" height="12" rx="2"/></g>`)}<line x1="26" y1="48" x2="288" y2="48" stroke="#E5E5EA"/>${row(50, L.fav, `<text x="266" y="72" text-anchor="middle" font-size="15" fill="#1C1C1E">☆</text>`)}<line x1="26" y1="84" x2="288" y2="84" stroke="#E5E5EA"/>${row(86, L.home, `<g transform="translate(266 103)" fill="none" stroke="#1C1C1E" stroke-width="1.8"><rect x="-8" y="-8" width="16" height="16" rx="4"/><path d="M0 -4v8M-4 0h8"/></g>`, true)}`);
+}
+function draw3(){
+  const L = T[L_()].L || T.it.L;
+  return svg(V26 ? 120 : 76, `<rect x="0" y="10" width="300" height="46" fill="#fff"/><text x="14" y="38" font-size="14" fill="#0A84FF" font-family="system-ui">${esc(L.cancel)}</text><text x="150" y="38" text-anchor="middle" font-size="12" font-weight="700" fill="#1C1C1E" font-family="system-ui">${esc(L.home.length > 22 ? L.home.slice(0, 21) + '…' : L.home)}</text><text x="286" y="38" text-anchor="end" font-size="15" font-weight="700" fill="#0A84FF" font-family="system-ui">${esc(L.add)}</text><rect x="${282 - L.add.length * 9 - 12}" y="18" width="${L.add.length * 9 + 20}" height="30" rx="8" fill="none" stroke="${RING}" stroke-width="3"/>`
+    + (V26 ? `<rect x="12" y="66" width="276" height="42" rx="12" fill="#fff"/><text x="26" y="92" font-size="14" fill="#1C1C1E" font-family="system-ui">${esc(L.web)}</text><rect x="236" y="76" width="42" height="24" rx="12" fill="#34C759"/><circle cx="266" cy="88" r="10" fill="#fff"/>` : ''));
+}
+function draw4(){
+  const ic = (x, c) => `<rect x="${x}" y="22" width="46" height="46" rx="11" fill="${c}"/>`;
+  return svg(96, `${ic(18, '#34C759')}${ic(80, '#FF9500')}${ic(142, '#0A84FF')}<image href="icons/iphone-180.png" x="204" y="22" width="46" height="46"/>${ring(227, 45, 30)}<text x="227" y="86" text-anchor="middle" font-size="10.5" fill="#1C1C1E" font-family="system-ui">Coach Play Up</text>`);
+}
+const L_ = () => L;
+const CODE = () => ($('#code')?.value || new URLSearchParams(location.search).get('c') || '').toUpperCase();
+function showArrow(on){ $('#iosArrow')?.remove(); if (!on || BR === 'inapp') return; const a = document.createElement('div'); a.id = 'iosArrow'; a.className = 'arrow ' + (TOP ? 'top' : V26 ? 'bottomright' : 'bottom'); a.textContent = TOP ? '⬆' : '⬇'; a.setAttribute('aria-hidden', 'true'); document.body.append(a); }
+// mode: 'pre' (prima di attivare) · 'post' (appena attivata in Safari) · 'app' (arrivo dall'app già attiva)
+let IOS_MODE = '';
+function iosGuide(mode){
+  const box = $('#sIos'); if (mode === ''){ IOS_MODE = ''; box.hidden = true; return; }
+  IOS_MODE = mode = mode || IOS_MODE; if (!mode){ box.hidden = true; return; }
+  const code = CODE();
+  const steps = BR === 'inapp' ? '' : `<ol class="steps">
+    <li><b>${esc(TOP ? t('s1top') : V26 ? t('s1v26') : t('s1'))}</b>${draw1()}</li>
+    <li><b>${esc(t('s2'))}</b>${draw2()}</li>
+    <li><b>${esc(V26 ? t('s3v26') : t('s3'))}</b>${draw3()}</li>
+    <li><b>${esc(mode === 'pre' ? t('s4') : t('s4ok'))}</b>${draw4()}</li></ol>`;
+  box.innerHTML = (mode === 'post' ? '' : `<h2>${esc(t('iosTitle'))}</h2><p>${esc(mode === 'pre' ? t('iosIntro') : t('iosIntroApp'))}</p>`)
+    + (BR === 'inapp' ? `<p class="warn">${esc(t('inapp'))}</p><div class="row"><button class="mini" id="cpLink">${esc(t('copyLink'))}</button></div>` : '')
+    + steps
+    + (code ? `<div class="codebox"><div><span>${esc(t('yourCode'))}</span><b>${esc(code)}</b></div><button class="mini" id="cpCode">${esc(t('copy'))}</button></div>` : '')
+    + (mode === 'app' ? `<p class="warn">${esc(t('dataNote'))}</p><a class="btn ghost" href="./">${esc(t('backApp'))}</a>` : '')
+    + (mode === 'pre' ? `<button class="link" id="noInst">${esc(t('noInst'))}</button>` : '');
+  box.hidden = false;
+  const cp = async (txt, b) => { try { await navigator.clipboard.writeText(txt); b.textContent = t('copied'); } catch { b.textContent = txt; } };
+  $('#cpCode') && ($('#cpCode').onclick = e => cp(code, e.currentTarget));
+  $('#cpLink') && ($('#cpLink').onclick = e => cp(location.href, e.currentTarget));
+  $('#noInst') && ($('#noInst').onclick = () => { box.hidden = true; IOS_MODE = ''; showArrow(false); $('#sCode').hidden = false; $('#code').focus(); });
+  showArrow(true);
+}
+// app installata (aperta dall'icona): il codice è già nel link, oppure si incolla con un tocco
+if (IS_IOS && SA){ $('#lastStep').hidden = !$('#code').value; if (!$('#code').value && navigator.clipboard?.readText) $('#pasteRow').hidden = false; }
+$('#paste').onclick = async () => { try { const v = (await navigator.clipboard.readText() || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); if (v){ $('#code').value = v.length > 4 ? v.slice(0, 4) + '-' + v.slice(4) : v; $('#lastStep').hidden = false; $('#go').focus(); } } catch {} };
+// iPhone in Safari, non ancora attivato: si parte dall'installazione
+if (IS_IOS && !SA && !Q0.get('rinnova') && !Q0.get('scaduto')){ $('#sCode').hidden = true; iosGuide(Q0.get('installa') ? 'app' : 'pre'); }
+// Android: dopo l'attivazione si può installare con un tocco
+let BIP = null; window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); BIP = e; if (!$('#sOk').hidden) $('#andInst').hidden = false; });
+$('#andInst').onclick = async () => { if (!BIP) return; BIP.prompt(); try { await BIP.userChoice; } catch {} BIP = null; $('#andInst').hidden = true; };
 paint();
 // già attivato? allora si va direttamente all'app
-fetch(F + '?a=stato&_=' + Date.now(), {cache: 'no-store', credentials: 'same-origin'}).then(r => r.json()).then(j => { if (j.attivo || j.lucchetto === false) location.replace('./'); else if (j.bloccato) say($('#msg'), t('blocked')); }).catch(() => {});
+const Q = new URLSearchParams(location.search);
+if (Q.get('rinnova')) say($('#msg'), t('renew'), true);
+fetch(F + '?a=stato&_=' + Date.now(), {cache: 'no-store', credentials: 'same-origin'}).then(r => r.json()).then(j => {
+  if (IS_IOS && !SA && Q.get('installa')){ if (j.codice && !$('#code').value){ $('#code').value = j.codice; try { history.replaceState(null, '', 'attiva.html?installa=1&c=' + encodeURIComponent(j.codice)); } catch {} iosGuide('app'); } return; }
+  if ((j.attivo && !Q.get('rinnova')) || j.lucchetto === false) location.replace('./');
+  else if (j.bloccato) say($('#msg'), t('blocked'));
+  else if (j.scaduto || Q.get('scaduto')) say($('#msg'), t('expired').replace('{0}', j.fino ? ' (' + dt(j.fino) + ')' : ''));
+}).catch(() => { if (Q.get('scaduto')) say($('#msg'), t('expired').replace('{0}', '')); });
 </script>
 </body>
 </html>
