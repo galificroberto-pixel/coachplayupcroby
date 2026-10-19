@@ -3,7 +3,7 @@
 // Su iPhone/iPad (Safari e app installata hanno memorie separate) lo stesso codice si può reinserire UNA volta entro 24 ore
 // nell'app installata: resta lo stesso dispositivo, con la stessa scadenza.
 // Azioni (POST JSON o GET):  stato · attiva {codice} · admin {password} · nuovo {nome, giorni} · lista · blocca {id} · sblocca {id} · esci
-// Recensioni e consigli: fbInvia {tipo, stelle, testo} (giocatori attivati) · fbLista · fbSegna {id|tutti, letto, arch} · fbElimina {id} (solo proprietario)
+// Recensioni e consigli: fbInvia {tipo, stelle, testo} (giocatori attivati) · fbLista · fbSegna {id|tutti, letto, arch} · fbElimina {id} · fbEliminaLetti · rinomina {codice, nome} (solo proprietario) · fbMiei · fbEliminaMio {id} (giocatore, solo messaggi già letti)
 const enc = new TextEncoder();
 const b64u = bytes => Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 let KEY = null, KEYSRC = null;
@@ -152,6 +152,13 @@ export default async (req) => {
       const keys = Object.keys(u.days).sort(); while (keys.length > 400) delete u.days[keys.shift()];
       await s.setJSON('uso/' + me.d, u); return out({ok: true, add});
     }
+    // il giocatore vede i suoi messaggi (con “letto da Croby”) e può togliere quelli già letti
+    if (a === 'fbMiei' || a === 'fbEliminaMio'){
+      if (!me || me.r === 'a') return out({ok: false, error: 'app non attivata'}, 403);
+      const fb = await loadFb(), mine = fb.list.filter(x => x.d === me.d);
+      if (a === 'fbEliminaMio'){ const x = mine.find(y => y.id === body.id); if (!x) return out({ok: false, error: 'messaggio non trovato'}, 404); if (!x.letto && !x.arch) return out({ok: false, error: 'non ancora letto da Croby'}, 400); await fbDel(x.id); return out({ok: true}); }
+      return out({ok: true, list: mine.slice().reverse().slice(0, 30).map(x => ({id: x.id, at: x.at, tipo: x.tipo, stelle: x.stelle, testo: String(x.testo || '').slice(0, 200), letto: !!(x.letto || x.arch)}))});
+    }
     // da qui in poi: solo il proprietario
     if (!me || me.r !== 'a') return out({ok: false, error: 'solo il proprietario'}, 403);
     if (a === 'nuovo'){
@@ -205,6 +212,15 @@ export default async (req) => {
     if (a === 'fbSegna'){ const fb = await loadFb(), ids = body.tutti ? fb.list.filter(x => !x.letto).map(x => x.id) : [body.id]; let n = 0;
       for (const x of fb.list) if (ids.includes(x.id)){ if (body.letto != null) x.letto = !!body.letto; if (body.arch != null){ x.arch = !!body.arch; if (x.arch) x.letto = true; } await fbPut(x); n++; }
       return out({ok: true, n}); }
+    if (a === 'fbEliminaLetti'){ const fb = await loadFb(); let n = 0; for (const x of fb.list) if (x.letto && !x.arch){ await fbDel(x.id); n++; } return out({ok: true, n}); }
+    // rinomina un giocatore: nome sul codice, sui suoi dispositivi e sui suoi messaggi
+    if (a === 'rinomina'){
+      const code = normCode(body.codice), c = st.codici[code], nome = short(body.nome).trim(); if (!c) return out({ok: false, error: 'codice non trovato'}, 404); if (!nome) return out({ok: false, error: 'scrivi il nome'}, 400);
+      c.nome = nome; const ids = []; for (const d of Object.values(st.dispositivi)) if (d.codice === code && !d.admin){ d.nome = nome; ids.push(d.id); }
+      await save(st);
+      try { const fb = await loadFb(); for (const x of fb.list) if (ids.includes(x.d) && x.nome !== nome){ x.nome = nome; await fbPut(x); } } catch {}
+      return out({ok: true, nome, dispositivi: ids.length});
+    }
     if (a === 'fbElimina'){ const fb = await loadFb(), x = fb.list.find(y => y.id === body.id); if (x) await fbDel(x.id); return out({ok: true, n: x ? 1 : 0}); }
     return out({ok: false, error: 'azione sconosciuta'}, 400);
   } catch (e){ return out({ok: false, error: String(e.message || e)}, 500); }
