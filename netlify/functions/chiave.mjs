@@ -47,6 +47,14 @@ async function fbPut(x){ const s = await store(); await s.setJSON('fb/' + x.id, 
 async function fbDel(id){ const s = await store(); if (s.delete) await s.delete('fb/' + id); }
 // ultimo accesso di ogni dispositivo: file a parte, così l'apertura dell'app non riscrive l'elenco di codici e dispositivi
 async function setVisto(d){ const s = await store(); const k = 'visto/' + d, v = await s.get(k, {type: 'json'}).catch(() => null); if (!v || Date.now() - v.t > 3600e3) await s.setJSON(k, {t: Date.now()}); }
+// tempo di utilizzo: un file per dispositivo (uso/<id>) con i secondi e le aperture di ogni giorno e le sezioni usate
+const SEZ = ['home', 'reg', 'oil', 'ana', 'game', 'dati', 'altro'];
+async function getUso(d){ const s = await store(); return (await s.get('uso/' + d, {type: 'json'}).catch(() => null)) || {days: {}}; }
+function usoSum(u){ const now = Date.now(), day = t => new Date(t).toLocaleDateString('sv-SE', {timeZone: 'Europe/Rome'}), oggi = day(now), d7 = day(now - 6 * 864e5), d30 = day(now - 29 * 864e5);
+  const r = {oggi: 0, s7: 0, s30: 0, tot: 0, n7: 0, n30: 0, ntot: 0, giorni30: 0, ultimo: null, sez: {}, g14: {}};
+  const d14 = day(now - 13 * 864e5);
+  for (const [k, v] of Object.entries(u.days || {})){ const sec = v.s || 0, n = v.n || 0; r.tot += sec; r.ntot += n; if (k === oggi) r.oggi += sec; if (k >= d7){ r.s7 += sec; r.n7 += n; } if (k >= d30){ r.s30 += sec; r.n30 += n; if (sec > 0) r.giorni30++; for (const [t, x] of Object.entries(v.t || {})) r.sez[t] = (r.sez[t] || 0) + x; } if (k >= d14) r.g14[k] = sec; if (sec > 0 && (!r.ultimo || k > r.ultimo)) r.ultimo = k; }
+  return r; }
 async function getVisto(d){ const s = await store(); return (await s.get('visto/' + d, {type: 'json'}).catch(() => null))?.t || null; }
 const short = s => String(s || '').slice(0, 60);
 export default async (req) => {
@@ -123,6 +131,25 @@ export default async (req) => {
         ver: short(body.ver).slice(0, 12), lang: short(body.lang).slice(0, 4), ua: short(req.headers.get('user-agent')), letto: false, arch: false, ricevuto: now});
       return out({ok: true, id});
     }
+    if (a === 'uso'){
+      if (!me || me.r === 'a') return out({ok: true, skip: true});
+      const dv = st.dispositivi[me.d]; if (!dv || dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const s = await store(), u = await getUso(me.d);
+      // stesso pacchetto rimandato (risposta persa): non si conta due volte
+      const bid = /^[A-Za-z0-9-]{6,40}$/.test(body.id || '') ? body.id : null; u.ids ||= [];
+      if (bid && u.ids.includes(bid)) return out({ok: true, gia: true});
+      const oggi = new Date(now + 16 * 3600e3).toISOString().slice(0, 10);   // il giorno del telefono (anche fusi orari avanti, es. Filippine)
+      const B = body.buf && typeof body.buf === 'object' ? body.buf : {}; let add = 0;
+      for (const [k, v] of Object.entries(B).slice(0, 40)){
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || k > oggi || k < new Date(now - 60 * 864e5).toISOString().slice(0, 10)) continue;
+        const D = (u.days[k] ||= {s: 0, n: 0, t: {}}), sec = Math.min(Math.max(0, parseInt(v.s, 10) || 0), 20 * 3600), n = Math.min(Math.max(0, parseInt(v.n, 10) || 0), 200);
+        D.s = Math.min(D.s + sec, 24 * 3600); D.n += n; add += sec;
+        for (const [t, x] of Object.entries(v.t || {})){ const tk = SEZ.includes(t) ? t : 'altro'; D.t[tk] = (D.t[tk] || 0) + Math.min(Math.max(0, parseInt(x, 10) || 0), 20 * 3600); }
+      }
+      if (bid){ u.ids.push(bid); u.ids = u.ids.slice(-40); }
+      const keys = Object.keys(u.days).sort(); while (keys.length > 400) delete u.days[keys.shift()];
+      await s.setJSON('uso/' + me.d, u); return out({ok: true, add});
+    }
     // da qui in poi: solo il proprietario
     if (!me || me.r !== 'a') return out({ok: false, error: 'solo il proprietario'}, 403);
     if (a === 'nuovo'){
@@ -134,9 +161,9 @@ export default async (req) => {
       return out({ok: true, codice: code.slice(0, 4) + '-' + code.slice(4), scade: st.codici[code].scade, durata, nome: st.codici[code].nome});
     }
     if (a === 'lista'){
-      const VISTO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); }));
+      const VISTO = {}, USO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); if (!st.dispositivi[id].admin) USO[id] = usoSum(await getUso(id)); }));
       const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null}));
-      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d}));
+      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, uso: USO[d.id] || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d}));
       return out({ok: true, codici, dispositivi});
     }
     // blocca / sblocca un giocatore: tutti i dispositivi attivati con il suo codice
