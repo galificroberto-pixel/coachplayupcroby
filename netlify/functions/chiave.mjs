@@ -32,8 +32,22 @@ async function store(){ if (globalThis.__CPU_DB) return globalThis.__CPU_DB; con
 async function load(){ const s = await store(); return (await s.get('stato', {type: 'json'})) || {codici: {}, dispositivi: {}, errori: []}; }
 async function save(st){ const s = await store(); await s.setJSON('stato', st); }
 // recensioni e consigli dei giocatori: archivio a parte, lo legge solo il proprietario
-async function loadFb(){ const s = await store(); return (await s.get('feedback', {type: 'json'})) || {list: []}; }
-async function saveFb(fb){ const s = await store(); fb.list = fb.list.slice(-2000); await s.setJSON('feedback', fb); }
+// ogni messaggio è un file a parte (fb/<id>): due giocatori che scrivono insieme, o Croby che segna “letto”
+// mentre arriva un messaggio, non possono più cancellarsi a vicenda (prima era un elenco unico riscritto ogni volta)
+async function legacyFb(){ const s = await store(); return (await s.get('feedback', {type: 'json'})) || {list: []}; }
+async function fbKeys(){ const s = await store(); if (!s.list) return []; const r = await s.list({prefix: 'fb/'}); return (r.blobs || []).map(b => b.key); }
+async function loadFb(){
+  const s = await store(), old = await legacyFb();
+  // trasloco una volta sola dei messaggi del vecchio elenco nei file singoli (niente si perde)
+  if (old.list?.length){ for (const x of old.list) if (x?.id && !(await s.get('fb/' + x.id, {type: 'json'}))) await s.setJSON('fb/' + x.id, x); await s.setJSON('feedback', {list: [], spostati: Date.now(), n: old.list.length}); }
+  const keys = await fbKeys(), list = (await Promise.all(keys.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(Boolean);
+  return {list: list.sort((a, b) => a.at - b.at)};
+}
+async function fbPut(x){ const s = await store(); await s.setJSON('fb/' + x.id, x); }
+async function fbDel(id){ const s = await store(); if (s.delete) await s.delete('fb/' + id); }
+// ultimo accesso di ogni dispositivo: file a parte, così l'apertura dell'app non riscrive l'elenco di codici e dispositivi
+async function setVisto(d){ const s = await store(); const k = 'visto/' + d, v = await s.get(k, {type: 'json'}).catch(() => null); if (!v || Date.now() - v.t > 3600e3) await s.setJSON(k, {t: Date.now()}); }
+async function getVisto(d){ const s = await store(); return (await s.get('visto/' + d, {type: 'json'}).catch(() => null))?.t || null; }
 const short = s => String(s || '').slice(0, 60);
 export default async (req) => {
   const admin = process.env.CPU_ADMIN || globalThis.__CPU_ADMIN || '';
@@ -52,7 +66,7 @@ export default async (req) => {
       if (me.r !== 'a' && !dv) return out({ok: false, attivo: false, lucchetto: true}, 200, delCookie);
       // accesso scaduto: l'app si ferma finché Croby non manda un codice nuovo (i dati sul telefono restano)
       if (me.r !== 'a' && dv.fino && Date.now() > dv.fino) return out({ok: false, attivo: false, scaduto: true, fino: dv.fino, nome: dv.nome || me.n || '', lucchetto: true});
-      if (dv){ dv.visto = Date.now(); await save(st); }
+      if (dv) await setVisto(me.d).catch(() => {});
       const f = me.r === 'a' ? null : (dv?.fino || null);
       let fbNuovi = 0; if (me.r === 'a'){ try { fbNuovi = (await loadFb()).list.filter(x => !x.letto && !x.arch).length; } catch {} }
       const cod = me.r !== 'a' && dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '';
@@ -99,11 +113,15 @@ export default async (req) => {
       const testo = String(body.testo || '').replace(/\s+$/g, '').slice(0, 1500), tipo = ['recensione', 'consiglio', 'problema'].includes(body.tipo) ? body.tipo : 'consiglio';
       const stelle = tipo === 'recensione' ? Math.min(5, Math.max(1, parseInt(body.stelle, 10) || 0)) || null : null;
       if (testo.trim().length < 3 && !stelle) return out({ok: false, error: 'scrivi qualcosa'}, 400);
+      // stesso messaggio rimandato (es. dalla coda senza internet): non si duplica
+      const cid = /^[A-Za-z0-9-]{6,40}$/.test(body.cid || '') ? 'fb-' + body.cid : null;
+      if (cid){ const s = await store(); if (await s.get('fb/' + cid, {type: 'json'})) return out({ok: true, id: cid, gia: true}); }
       const fb = await loadFb(), mine = fb.list.filter(x => x.d === me.d && now - x.at < 864e5);
-      if (mine.length >= 5) return out({ok: false, error: 'troppi messaggi oggi: riprova domani'}, 429);
-      fb.list.push({id: 'fb-' + rnd(8), at: now, d: me.d, nome: dv?.nome || me.n || '', codice: dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '', tipo, stelle, testo,
-        ver: short(body.ver).slice(0, 12), lang: short(body.lang).slice(0, 4), ua: short(req.headers.get('user-agent')), letto: false, arch: false});
-      await saveFb(fb); return out({ok: true});
+      if (mine.length >= 20) return out({ok: false, error: 'troppi messaggi oggi: riprova domani'}, 429);
+      const id = cid || 'fb-' + rnd(8);
+      await fbPut({id, at: Number(body.at) > now - 30 * 864e5 && Number(body.at) <= now ? Number(body.at) : now, d: me.d, nome: dv?.nome || me.n || '', codice: dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '', tipo, stelle, testo,
+        ver: short(body.ver).slice(0, 12), lang: short(body.lang).slice(0, 4), ua: short(req.headers.get('user-agent')), letto: false, arch: false, ricevuto: now});
+      return out({ok: true, id});
     }
     // da qui in poi: solo il proprietario
     if (!me || me.r !== 'a') return out({ok: false, error: 'solo il proprietario'}, 403);
@@ -116,8 +134,9 @@ export default async (req) => {
       return out({ok: true, codice: code.slice(0, 4) + '-' + code.slice(4), scade: st.codici[code].scade, durata, nome: st.codici[code].nome});
     }
     if (a === 'lista'){
+      const VISTO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); }));
       const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null}));
-      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: d.visto || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d}));
+      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d}));
       return out({ok: true, codici, dispositivi});
     }
     // blocca / sblocca un giocatore: tutti i dispositivi attivati con il suo codice
@@ -137,10 +156,11 @@ export default async (req) => {
       c.revocato = true; await save(st); return out({ok: true});
     }
     if (a === 'fbLista'){ const fb = await loadFb(); return out({ok: true, list: fb.list.slice().reverse()}); }
-    if (a === 'fbSegna'){ const fb = await loadFb(), ids = body.tutti ? fb.list.map(x => x.id) : [body.id]; let n = 0;
-      for (const x of fb.list) if (ids.includes(x.id)){ if (body.letto != null) x.letto = !!body.letto; if (body.arch != null){ x.arch = !!body.arch; if (x.arch) x.letto = true; } n++; }
-      await saveFb(fb); return out({ok: true, n}); }
-    if (a === 'fbElimina'){ const fb = await loadFb(), n0 = fb.list.length; fb.list = fb.list.filter(x => x.id !== body.id); await saveFb(fb); return out({ok: true, n: n0 - fb.list.length}); }
+    // si cambia solo il messaggio toccato: un messaggio appena arrivato non viene mai sovrascritto
+    if (a === 'fbSegna'){ const fb = await loadFb(), ids = body.tutti ? fb.list.filter(x => !x.letto).map(x => x.id) : [body.id]; let n = 0;
+      for (const x of fb.list) if (ids.includes(x.id)){ if (body.letto != null) x.letto = !!body.letto; if (body.arch != null){ x.arch = !!body.arch; if (x.arch) x.letto = true; } await fbPut(x); n++; }
+      return out({ok: true, n}); }
+    if (a === 'fbElimina'){ const fb = await loadFb(), x = fb.list.find(y => y.id === body.id); if (x) await fbDel(x.id); return out({ok: true, n: x ? 1 : 0}); }
     return out({ok: false, error: 'azione sconosciuta'}, 400);
   } catch (e){ return out({ok: false, error: String(e.message || e)}, 500); }
 };
