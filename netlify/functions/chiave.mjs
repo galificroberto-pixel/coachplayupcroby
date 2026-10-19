@@ -110,7 +110,7 @@ export default async (req) => {
       const old = me && me.r !== 'a' ? st.dispositivi[me.d] : null;
       let d, fino;
       if (old){ d = me.d; fino = dur ? Math.max(now, old.fino || now) + dur : null; Object.assign(old, {codice: code, nome: c.nome || old.nome || '', fino, rinnovi: (old.rinnovi || 0) + 1, rinnovato: now, bloccato: false}); }
-      else { d = 'dev-' + rnd(10); fino = dur ? usi[0] + dur : null; st.dispositivi[d] = {id: d, nome: c.nome || '', codice: code, at: now, fino, ua: short(req.headers.get('user-agent'))}; }
+      else { d = 'dev-' + rnd(10); fino = c.reset && c.reset.fino && c.reset.fino > now ? c.reset.fino : dur ? usi[0] + dur : null; st.dispositivi[d] = {id: d, nome: c.nome || '', codice: code, at: now, fino, ua: short(req.headers.get('user-agent'))}; }
       await save(st);
       return out({ok: true, nome: c.nome || '', fino, rinnovo: !!old}, 200, setCookie(await sign({d, r: 'u', n: c.nome || '', i: now, f: fino}, admin)));
     }
@@ -172,6 +172,22 @@ export default async (req) => {
       const on = a === 'bloccaGiocatore'; c.bloccato = on; let n = 0;
       for (const d of Object.values(st.dispositivi)) if (d.codice === c.codice && !d.admin){ d.bloccato = on; n++; }
       await save(st); return out({ok: true, dispositivi: n});
+    }
+    // elimina un giocatore: tolti tutti i suoi dispositivi (sul telefono l'app torna alla pagina del codice; i suoi dati restano lì).
+    // riattiva: lo STESSO codice torna valido (7 giorni per usarlo) e la scadenza dell'accesso resta quella di prima
+    if (a === 'eliminaGiocatore'){
+      const code = normCode(body.codice), c = st.codici[code]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      let n = 0, fino = 0; const s = await store();
+      for (const d of Object.values(st.dispositivi)) if (d.codice === code && !d.admin){ fino = Math.max(fino, d.fino || 0); delete st.dispositivi[d.id]; n++; if (s.delete){ s.delete('visto/' + d.id).catch(() => {}); } }
+      if (body.riattiva){ Object.assign(c, {usi: [], bloccato: false, revocato: false, scade: now + 7 * 864e5, reset: {fino: fino || null, at: now}}); }
+      else delete st.codici[code];
+      await save(st);
+      return out({ok: true, dispositivi: n, riattiva: !!body.riattiva, codice: code.slice(0, 4) + '-' + code.slice(4), nome: c.nome || '', scade: c.scade, durata: c.durata || null, fino: fino || null});
+    }
+    if (a === 'eliminaDispositivo'){
+      const d = st.dispositivi[body.id]; if (!d) return out({ok: false, error: 'dispositivo non trovato'}, 404);
+      if (d.admin && d.id === me.d) return out({ok: false, error: 'non puoi eliminare questo dispositivo mentre lo usi'}, 400);
+      delete st.dispositivi[body.id]; await save(st); return out({ok: true});
     }
     if (a === 'blocca' || a === 'sblocca'){
       const d = st.dispositivi[body.id]; if (!d) return out({ok: false, error: 'dispositivo non trovato'}, 404);
