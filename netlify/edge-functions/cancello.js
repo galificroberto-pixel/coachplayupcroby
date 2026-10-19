@@ -17,8 +17,8 @@ export async function verifyToken(tok, admin){
   } catch { return null; }
 }
 const cookieOf = (req, name) => { const m = (req.headers.get('cookie') || '').match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)')); return m ? decodeURIComponent(m[1]) : ''; };
-// sempre aperti: la pagina di attivazione, la funzione delle chiavi, le icone e il manifest (per installare l'app)
-const OPEN = [/^\/attiva\.html$/, /^\/\.netlify\/functions\/chiave/, /^\/manifest\.webmanifest$/, /^\/icons\//, /^\/favicon\.ico$/, /^\/robots\.txt$/];
+// sempre aperti (anche il service worker e la versione: così un telefono con l'app vecchia in memoria si aggiorna sempre): la pagina di attivazione, la funzione delle chiavi, le icone e il manifest (per installare l'app)
+const OPEN = [/^\/attiva\.html$/, /^\/ripara\.html$/, /^\/sw\.js$/, /^\/version\.json$/, /^\/\.netlify\/functions\/chiave/, /^\/manifest\.webmanifest$/, /^\/icons\//, /^\/favicon\.ico$/, /^\/robots\.txt$/];
 export default async (req, context) => {
   const admin = (globalThis.Netlify?.env?.get?.('CPU_ADMIN')) || '';
   if (!admin) return;                                   // lucchetto non impostato: tutto come prima

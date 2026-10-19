@@ -4,3 +4,18 @@
   functions = "netlify/functions"
 [functions]
   node_bundler = "esbuild"
+
+# il service worker e la versione non devono mai restare vecchi nella memoria del telefono
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+[[headers]]
+  for = "/version.json"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+[[headers]]
+  for = "/ripara.html"
+  [headers.values]
+    Cache-Control = "no-store"
+    Clear-Site-Data = "\"cache\""
