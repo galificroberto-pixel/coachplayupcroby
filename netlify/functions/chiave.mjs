@@ -100,7 +100,9 @@ export default async (req) => {
       const apple = x => /iPhone|iPad|iPod|Macintosh/.test(x || '');   // (nell'elenco l'user-agent è accorciato)
       // iPhone: Safari → app sulla schermata Home (stesso telefono, memorie separate): si riusa lo stesso posto
       const first = usi.length === 1 ? Object.values(st.dispositivi).find(x => x.codice === code && !x.admin) : null;
-      const gemello = first && now - usi[0] <= 24 * 3600e3 && apple(first.ua) && apple(uaNow) && !/Android|Windows/.test(uaNow) && !(me && me.d === first.id);
+      const andr = x => /Android/.test(x || '');
+      // stesso telefono, memorie separate: iPhone (Safari → app sulla Home) e Android (WhatsApp → Chrome / app installata), entro 24 ore
+      const gemello = first && now - usi[0] <= 24 * 3600e3 && ((apple(first.ua) && apple(uaNow) && !/Android|Windows/.test(uaNow)) || (andr(first.ua) && andr(uaNow))) && !(me && me.d === first.id);
       if (usi.length && !gemello) return fail('codice già usato: ogni codice vale una volta sola');
       usi.push(now); c.usi = usi;
       if (gemello){ first.app = now; first.ua = short(uaNow); await save(st);
