@@ -57,13 +57,26 @@ function usoSum(u){ const now = Date.now(), day = t => new Date(t).toLocaleDateS
   return r; }
 async function getVisto(d){ const s = await store(); return (await s.get('visto/' + d, {type: 'json'}).catch(() => null))?.t || null; }
 const short = s => String(s || '').slice(0, 60);
-export default async (req) => {
+// 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
+// quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
+const SRV_VER = '3.85';
+let DEPLOY_OK = false;
+async function noteDeploy(context){
+  if (DEPLOY_OK) return; DEPLOY_OK = true;
+  try {
+    const id = String(context?.deploy?.id || process.env.DEPLOY_ID || SRV_VER).slice(0, 40), s = await store(), D = (await s.get('crediti', {type: 'json'}).catch(() => null)) || {deploy: [], lettura: null};
+    if (D.deploy.some(x => x.id === id)) return;
+    D.deploy = [...D.deploy, {id, v: SRV_VER, at: Date.now()}].slice(-120); await s.setJSON('crediti', D);
+  } catch {}
+}
+export default async (req, context) => {
   const admin = process.env.CPU_ADMIN || globalThis.__CPU_ADMIN || '';
   const u = new URL(req.url);
   let body = {}; if (req.method === 'POST'){ try { body = await req.json(); } catch {} }
   const a = body.a || u.searchParams.get('a') || 'stato';
   if (!admin) return out({ok: true, lucchetto: false});
   const me = await verify(cookieOf(req, 'cpu_key'), admin);
+  await noteDeploy(context);
   try {
     if (a === 'stato'){
       if (!me) return out({ok: false, attivo: false, lucchetto: true});
@@ -76,11 +89,34 @@ export default async (req) => {
       if (me.r !== 'a' && dv.fino && Date.now() > dv.fino) return out({ok: false, attivo: false, scaduto: true, fino: dv.fino, nome: dv.nome || me.n || '', lucchetto: true});
       if (dv) await setVisto(me.d).catch(() => {});
       const f = me.r === 'a' ? null : (dv?.fino || null);
-      let fbNuovi = 0; if (me.r === 'a'){ try { fbNuovi = (await loadFb()).list.filter(x => !x.letto && !x.arch).length; } catch {} }
+      let fbNuovi = 0, errNuovi = 0; if (me.r === 'a'){ try { fbNuovi = (await loadFb()).list.filter(x => !x.letto && !x.arch).length; } catch {}
+        try { const s = await store(); if (s.list){ const ks = (await s.list({prefix: 'err/'})).blobs.map(b => b.key); errNuovi = (await Promise.all(ks.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(x => x && !x.letto).length; } } catch {} }
       const cod = me.r !== 'a' && dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '';
-      return out({ok: true, attivo: true, admin: me.r === 'a', nome: me.n || '', fino: f, codice: cod, fbNuovi, lucchetto: true}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
+      return out({ok: true, attivo: true, admin: me.r === 'a', nome: me.n || '', fino: f, codice: cod, fbNuovi, errNuovi, lucchetto: true}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
     }
     if (a === 'esci') return out({ok: true}, 200, delCookie);
+    // 🐞 errori dai telefoni: uno per tipo (stesso messaggio + punto + versione), con il conteggio e chi l'ha avuto
+    if (a === 'errLog'){
+      const L = Array.isArray(body.list) ? body.list.slice(0, 10) : []; if (!L.length) return out({ok: true, n: 0});
+      const s = await store(), ua = short(req.headers.get('user-agent')), now = Date.now();
+      let who = '–'; if (me){ if (me.r === 'a') who = 'Croby'; else { try { const st0 = await load(); who = st0.dispositivi[me.d]?.nome || me.n || 'giocatore'; } catch { who = me.n || 'giocatore'; } } }
+      let n = 0;
+      for (const e of L){
+        const msg = String(e.msg || '').slice(0, 300).trim(); if (!msg) continue;
+        const where = String(e.where || '').slice(0, 160), ver = String(e.ver || '').slice(0, 12), stack = String(e.stack || '').slice(0, 1500);
+        let h = 0; for (const ch of msg + '|' + where + '|' + ver) h = (h * 31 + ch.charCodeAt(0)) | 0; const sig = 'e' + (h >>> 0).toString(36);
+        const k = 'err/' + sig, old = await s.get(k, {type: 'json'}).catch(() => null);
+        if (!old && s.list && (await s.list({prefix: 'err/'})).blobs.length >= 300) continue;   // tetto: niente spam
+        const x = old || {sig, msg, where, ver, stack, first: now, count: 0, chi: [], letto: false};
+        x.count += Math.min(Math.max(1, parseInt(e.n, 10) || 1), 50); x.last = now; x.letto = false; if (!x.stack && stack) x.stack = stack;
+        const dev = /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows|Macintosh|Linux/.test(ua) ? 'PC' : '?', os = String(e.os || '').slice(0, 40);
+        const tag = who + ' · ' + (os && os.startsWith(dev === 'iPhone' ? 'iOS' : dev) ? os : dev + (os ? ' ' + os : ''));
+        if (!x.chi.includes(tag)) x.chi = [...x.chi, tag].slice(-15);
+        x.extra = {tab: String(e.tab || '').slice(0, 10), lang: String(e.lang || '').slice(0, 4), app: !!e.app, scr: String(e.scr || '').slice(0, 12), pagina: String(e.pagina || '').slice(0, 30)};
+        await s.setJSON(k, x); n++;
+      }
+      return out({ok: true, n});
+    }
     // protezione dai tentativi a raffica: massimo 12 errori in 15 minuti per tutto il sito
     const st = await load(); const now = Date.now(); st.errori = (st.errori || []).filter(t => now - t < 15 * 60e3);
     const tooMany = st.errori.length >= 12;
@@ -169,6 +205,15 @@ export default async (req) => {
       await save(st);
       return out({ok: true, codice: code.slice(0, 4) + '-' + code.slice(4), scade: st.codici[code].scade, durata, nome: st.codici[code].nome});
     }
+    if (a === 'crediti' || a === 'creditiSalva'){
+      const s = await store(), D = (await s.get('crediti', {type: 'json'}).catch(() => null)) || {deploy: [], lettura: null};
+      if (a === 'creditiSalva'){
+        const n = Math.round(+body.n), g = Math.round(+body.giorno || 0), tot = Math.round(+body.totale || 300);
+        if (!(n >= 0 && n <= 100000)) return out({ok: false, error: 'numero non valido'}, 400);
+        D.lettura = {n, at: now, giorno: g >= 1 && g <= 31 ? g : null, totale: tot >= 1 && tot <= 100000 ? tot : 300}; await s.setJSON('crediti', D);
+      }
+      return out({ok: true, ...D, ora: now, ver: SRV_VER});
+    }
     if (a === 'lista'){
       const VISTO = {}, USO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); if (!st.dispositivi[id].admin) USO[id] = usoSum(await getUso(id)); }));
       const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null}));
@@ -206,6 +251,14 @@ export default async (req) => {
     if (a === 'annulla'){
       const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
       c.revocato = true; await save(st); return out({ok: true});
+    }
+    if (a === 'errLista' || a === 'errSegna' || a === 'errElimina'){
+      const s = await store(), keys = s.list ? (await s.list({prefix: 'err/'})).blobs.map(b => b.key) : [];
+      const all = (await Promise.all(keys.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(Boolean);
+      if (a === 'errLista') return out({ok: true, list: all.sort((x, y) => y.last - x.last)});
+      const ids = body.tutti ? all.map(x => x.sig) : [body.sig]; let n = 0;
+      for (const x of all) if (ids.includes(x.sig)){ if (a === 'errElimina'){ if (s.delete) await s.delete('err/' + x.sig); } else { x.letto = body.letto !== false; await s.setJSON('err/' + x.sig, x); } n++; }
+      return out({ok: true, n});
     }
     if (a === 'fbLista'){ const fb = await loadFb(); return out({ok: true, list: fb.list.slice().reverse()}); }
     // si cambia solo il messaggio toccato: un messaggio appena arrivato non viene mai sovrascritto
