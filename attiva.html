@@ -166,7 +166,7 @@ $('#code').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').cl
 // “Sei Croby?” resta sempre visibile (anche quando su iPhone si vedono i disegni per installare o su Android “Apri in Chrome”)
 $('#toAdmin').onclick = () => { ['#sCode', '#sIos', '#sAnd', '#sHave'].forEach(q => { const e = $(q); if (e) e.hidden = true; }); showArrow(false); $('#sAdmin').hidden = false; $('#pw').focus(); };
 $('#toCode').onclick = () => location.reload();
-{ const own = () => { const b = $('#toAdmin'); if (!b) return; const h = !$('#sAdmin').hidden || !$('#sOk').hidden; if (b.parentNode.hidden !== h) b.parentNode.hidden = h; };
+{ const own = () => { const b = $('#toAdmin'); if (!b) return; const h = !$('#sAdmin').hidden || !$('#sOk').hidden || !$('#sHave').hidden; if (b.parentNode.hidden !== h) b.parentNode.hidden = h; };
   new MutationObserver(own).observe(document.querySelector('main'), {attributes: true, subtree: true, attributeFilter: ['hidden']}); own(); }
 $('#goAdmin').onclick = async () => {
   const b = $('#goAdmin'); b.disabled = true;
@@ -306,6 +306,9 @@ fetch(F + '?a=stato&_=' + Date.now(), {cache: 'no-store', credentials: 'same-ori
   if (IS_IOS && !SA && Q.get('installa')){ if (j.codice && !$('#code').value){ $('#code').value = j.codice; try { history.replaceState(null, '', 'attiva.html?installa=1&c=' + encodeURIComponent(j.codice)); } catch {} iosGuide('app'); } return; }
   const qc = (Q.get('c') || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), myc = (j.codice || '').replace(/[^A-Z0-9]/g, '');
   // telefono già attivo e nel link c'è un codice diverso dal suo: si chiede cosa fare invece di aprire l'app senza dire niente
+  // app aperta dall'icona (iPhone/iPad la riapre sempre dalla pagina da cui è stata installata, anche con un codice vecchio nel link):
+  // se il dispositivo è già attivo si entra subito, senza chiedere niente
+  if (j.attivo && SA && !Q.get('rinnova')){ location.replace('./'); return; }
   if (j.attivo && qc && qc !== myc && !Q.get('rinnova')){ haveShow(j); return; }
   if ((j.attivo && !Q.get('rinnova')) || j.lucchetto === false) location.replace('./');
   else if (j.bloccato) say($('#msg'), t('blocked'));
