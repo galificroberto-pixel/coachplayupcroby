@@ -64,6 +64,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px}
 .msg{margin-top:12px;padding:10px 12px;border-radius:10px;font-size:14.5px;display:none}.msg.err{display:block;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--ink)}.msg.ok{display:block;background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ink)}
 .small{font-size:13px}.link{background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;font-size:13.5px;padding:0;margin-top:16px}
 .pin{float:right;width:30px;height:38px}
+.owner{margin:16px 0 0;text-align:center}.owner .link{margin-top:0;font-size:14.5px}
 /* guida iPhone: disegni dei tocchi */
 .ios{margin-top:4px}.ios h2{color:var(--accent)}
 .steps{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:12px;counter-reset:st}
@@ -97,7 +98,6 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px}
     <button class="btn" id="go" data-t="go"></button>
     <div class="msg" id="msg"></div>
     <p class="small" data-t="once"></p>
-    <button class="link" id="toAdmin" data-t="owner"></button>
   </section>
   <section id="sHave" hidden>
     <h2 id="haveT"></h2>
@@ -125,6 +125,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px}
   </section>
   <section id="sAnd" class="ios" hidden></section>
   <section id="sIos" class="ios" hidden></section>
+  <p class="owner"><button class="link" id="toAdmin" data-t="owner"></button></p>
 </main>
 <script>
 const T = {
@@ -162,8 +163,11 @@ $('#go').onclick = async () => {
   finally { b.disabled = false; b.textContent = goLbl(); }
 };
 $('#code').addEventListener('keydown', e => { if (e.key === 'Enter') $('#go').click(); });
-$('#toAdmin').onclick = () => { $('#sCode').hidden = true; $('#sAdmin').hidden = false; $('#pw').focus(); };
-$('#toCode').onclick = () => { $('#sAdmin').hidden = true; $('#sCode').hidden = false; };
+// “Sei Croby?” resta sempre visibile (anche quando su iPhone si vedono i disegni per installare o su Android “Apri in Chrome”)
+$('#toAdmin').onclick = () => { ['#sCode', '#sIos', '#sAnd', '#sHave'].forEach(q => { const e = $(q); if (e) e.hidden = true; }); showArrow(false); $('#sAdmin').hidden = false; $('#pw').focus(); };
+$('#toCode').onclick = () => location.reload();
+{ const own = () => { const b = $('#toAdmin'); if (!b) return; const h = !$('#sAdmin').hidden || !$('#sOk').hidden; if (b.parentNode.hidden !== h) b.parentNode.hidden = h; };
+  new MutationObserver(own).observe(document.querySelector('main'), {attributes: true, subtree: true, attributeFilter: ['hidden']}); own(); }
 $('#goAdmin').onclick = async () => {
   const b = $('#goAdmin'); b.disabled = true;
   try { const j = await post({a: 'admin', password: $('#pw').value}); if (j.ok) done(true); else say($('#msgA'), errTxt(j.error || 'errore')); }
