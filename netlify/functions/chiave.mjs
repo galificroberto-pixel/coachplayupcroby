@@ -59,7 +59,7 @@ async function getVisto(d){ const s = await store(); return (await s.get('visto/
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '3.88';
+const SRV_VER = '3.89';
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -205,12 +205,20 @@ export default async (req, context) => {
       await save(st);
       return out({ok: true, codice: code.slice(0, 4) + '-' + code.slice(4), scade: st.codici[code].scade, durata, nome: st.codici[code].nome});
     }
+    // crediti tolti a mano da Croby (es. consumi che vede su Netlify) e costo di ogni versione caricata
+    if (a === 'creditiTogli' || a === 'creditiCosto' || a === 'creditiAnnulla'){
+      const s = await store(), D = (await s.get('crediti', {type: 'json'}).catch(() => null)) || {deploy: [], lettura: null};
+      if (a === 'creditiTogli'){ const n = Math.round(+body.n); if (!(n > 0 && n <= 100000)) return out({ok: false, error: 'numero non valido'}, 400); D.manuali = [...(D.manuali || []), {n, at: now, nota: short(body.nota)}].slice(-100); }
+      if (a === 'creditiAnnulla') D.manuali = (D.manuali || []).filter(x => x.at !== +body.at);
+      if (a === 'creditiCosto'){ const co = Math.round(+body.costo); if (!(co >= 0 && co <= 10000)) return out({ok: false, error: 'numero non valido'}, 400); D.lettura = {...(D.lettura || {n: 300, at: now, totale: 300}), costo: co}; }
+      await s.setJSON('crediti', D); return out({ok: true, ...D, ora: now, ver: SRV_VER});
+    }
     if (a === 'crediti' || a === 'creditiSalva'){
       const s = await store(), D = (await s.get('crediti', {type: 'json'}).catch(() => null)) || {deploy: [], lettura: null};
       if (a === 'creditiSalva'){
-        const n = Math.round(+body.n), g = Math.round(+body.giorno || 0), tot = Math.round(+body.totale || 300);
+        const n = Math.round(+body.n), g = Math.round(+body.giorno || 0), tot = Math.round(+body.totale || 300), co = Math.round(+body.costo || 15);
         if (!(n >= 0 && n <= 100000)) return out({ok: false, error: 'numero non valido'}, 400);
-        D.lettura = {n, at: now, giorno: g >= 1 && g <= 31 ? g : null, totale: tot >= 1 && tot <= 100000 ? tot : 300}; await s.setJSON('crediti', D);
+        D.lettura = {n, at: now, giorno: g >= 1 && g <= 31 ? g : null, totale: tot >= 1 && tot <= 100000 ? tot : 300, costo: co >= 0 && co <= 10000 ? co : 15}; D.manuali = []; await s.setJSON('crediti', D);
       }
       return out({ok: true, ...D, ora: now, ver: SRV_VER});
     }
@@ -273,6 +281,14 @@ export default async (req, context) => {
       await save(st);
       try { const fb = await loadFb(); for (const x of fb.list) if (ids.includes(x.d) && x.nome !== nome){ x.nome = nome; await fbPut(x); } } catch {}
       return out({ok: true, nome, dispositivi: ids.length});
+    }
+    // cambia la scadenza di un giocatore attivo (tutti i suoi dispositivi): una data, oppure null = senza scadenza
+    if (a === 'scadenza'){
+      const code = normCode(body.codice), c = st.codici[code]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      const fino = body.fino == null ? null : Math.round(+body.fino); if (fino != null && !(fino > 0)) return out({ok: false, error: 'data non valida'}, 400);
+      let n = 0; for (const d of Object.values(st.dispositivi)) if (d.codice === code && !d.admin){ d.fino = fino; d.cambiata = now; n++; }
+      if (!n) return out({ok: false, error: 'nessun dispositivo attivo per questo giocatore'}, 404);
+      await save(st); return out({ok: true, fino, dispositivi: n});
     }
     if (a === 'fbElimina'){ const fb = await loadFb(), x = fb.list.find(y => y.id === body.id); if (x) await fbDel(x.id); return out({ok: true, n: x ? 1 : 0}); }
     return out({ok: false, error: 'azione sconosciuta'}, 400);
