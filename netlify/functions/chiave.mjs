@@ -60,7 +60,7 @@ const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
 const SRV_VER = '3.98';
-const SRV_BUILD = '3.98-2d154891';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_BUILD = '3.98-2c9ed701';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
