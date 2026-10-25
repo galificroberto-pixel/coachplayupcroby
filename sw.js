@@ -1,6 +1,6 @@
 // Coach Play Up – service worker: alla prima apertura salva tutta l'app sul dispositivo,
 // poi funziona anche senza internet. Con internet controlla se c'è una versione nuova.
-const CACHE = 'coach-play-up-v4.01-1e7e824d';
+const CACHE = 'coach-play-up-v4.02-e3ac7353';
 const FILES = [
 "./",
 "./icons/android-maskable-192.png",
@@ -41,9 +41,15 @@ const FILES = [
 "./pose/tf.js"
 ];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
-self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
+self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== 'cpu-condivisi').map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
-  const r = e.request; if (r.method !== 'GET') return;
+  const r = e.request;
+  // file condiviso con l'app (Android: WhatsApp → Condividi → Coach Play Up): lo metto da parte e apro l'app che chiede se ripristinarlo
+  if (r.method === 'POST' && new URL(r.url).searchParams.get('condividi') === '1'){
+    e.respondWith((async () => { try { const fd = await r.formData(); const f = fd.get('file') || [...fd.values()].find(v => v && typeof v === 'object');
+      if (f){ const c = await caches.open('cpu-condivisi'); await c.put('./__condiviso', new Response(f, {headers: {'x-nome': encodeURIComponent(f.name || 'backup.json')}})); } } catch {}
+      return Response.redirect('./?condividi=1', 303); })()); return; }
+  if (r.method !== 'GET') return;
   const url = new URL(r.url); if (url.origin !== location.origin) return;
   if (url.pathname.startsWith('/.netlify/')) return; // collegamento a internet: mai dalla cache
   if (url.pathname.endsWith('version.json')){ e.respondWith(fetch(r, {cache: 'no-store'})); return; }
