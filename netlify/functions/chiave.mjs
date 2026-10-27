@@ -2,7 +2,7 @@
 // Solo il proprietario (password in CPU_ADMIN su Netlify) crea codici; ogni codice si usa UNA volta
 // Su iPhone/iPad (Safari e app installata hanno memorie separate) lo stesso codice si può reinserire UNA volta entro 24 ore
 // nell'app installata: resta lo stesso dispositivo, con la stessa scadenza.
-// Azioni (POST JSON o GET):  stato · attiva {codice} · admin {password} · nuovo {nome, giorni} · lista · blocca {id} · sblocca {id} · esci
+// Azioni (POST JSON o GET):  stato · attiva {codice} · admin {password} · nuovo {nome, giorni, allenatore} · allenatore {codice, on} · lista · blocca {id} · sblocca {id} · esci
 // Recensioni e consigli: fbInvia {tipo, stelle, testo} (giocatori attivati) · fbLista · fbSegna {id|tutti, letto, arch} · fbElimina {id} · fbEliminaLetti · rinomina {codice, nome} (solo proprietario) · fbMiei · fbEliminaMio {id} (giocatore, solo messaggi già letti)
 const enc = new TextEncoder();
 const b64u = bytes => Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -59,8 +59,8 @@ async function getVisto(d){ const s = await store(); return (await s.get('visto/
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '4.11';
-const SRV_BUILD = '4.11-987e30fb';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '5.20';
+const SRV_BUILD = '5.20-171e243f';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -93,7 +93,8 @@ export default async (req, context) => {
       let fbNuovi = 0, errNuovi = 0; if (me.r === 'a'){ try { fbNuovi = (await loadFb()).list.filter(x => !x.letto && !x.arch).length; } catch {}
         try { const s = await store(); if (s.list){ const ks = (await s.list({prefix: 'err/'})).blobs.map(b => b.key); errNuovi = (await Promise.all(ks.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(x => x && !x.letto).length; } } catch {} }
       const cod = me.r !== 'a' && dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '';
-      return out({ok: true, attivo: true, admin: me.r === 'a', nome: me.n || '', fino: f, codice: cod, fbNuovi, errNuovi, lucchetto: true}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
+      const allenatore = me.r === 'a' || !!dv?.allenatore || !!(dv?.codice && st.codici[dv.codice]?.allenatore);
+      return out({ok: true, attivo: true, admin: me.r === 'a', allenatore, nome: me.n || '', fino: f, codice: cod, fbNuovi, errNuovi, lucchetto: true}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
     }
     if (a === 'esci') return out({ok: true}, 200, delCookie);
     // 🐞 errori dai telefoni: uno per tipo (stesso messaggio + punto + versione), con il conteggio e chi l'ha avuto
@@ -132,6 +133,7 @@ export default async (req, context) => {
       if (tooMany) return out({ok: false, error: 'troppi tentativi: riprova fra 15 minuti'}, 429);
       const code = normCode(body.codice), c = st.codici[code];
       if (!c || c.revocato || c.bloccato) return fail('codice non valido');
+      if (body.soloAllenatore && !c.allenatore) return out({ok: false, error: 'questo non è un codice allenatore'}, 400);   // dall'Area allenatore: un codice da giocatore non si consuma
       if (c.scade && now > c.scade && !c.usi?.length) return fail('codice scaduto: chiedine uno nuovo');
       const usi = c.usi || [], uaNow = req.headers.get('user-agent') || '';
       const apple = x => /iPhone|iPad|iPod|Macintosh/.test(x || '');   // (nell'elenco l'user-agent è accorciato)
@@ -148,10 +150,10 @@ export default async (req, context) => {
       // rinnovo: stesso dispositivo già attivato (anche se scaduto) → stesso posto, il tempo nuovo si aggiunge a quello che restava
       const old = me && me.r !== 'a' ? st.dispositivi[me.d] : null;
       let d, fino;
-      if (old){ d = me.d; fino = dur ? Math.max(now, old.fino || now) + dur : null; Object.assign(old, {codice: code, nome: c.nome || old.nome || '', fino, rinnovi: (old.rinnovi || 0) + 1, rinnovato: now, bloccato: false}); }
-      else { d = 'dev-' + rnd(10); fino = c.reset && c.reset.fino && c.reset.fino > now ? c.reset.fino : dur ? usi[0] + dur : null; st.dispositivi[d] = {id: d, nome: c.nome || '', codice: code, at: now, fino, ua: short(req.headers.get('user-agent'))}; }
+      if (old){ d = me.d; fino = dur ? Math.max(now, old.fino || now) + dur : null; Object.assign(old, {codice: code, nome: c.nome || old.nome || '', fino, rinnovi: (old.rinnovi || 0) + 1, rinnovato: now, bloccato: false, allenatore: !!(old.allenatore || c.allenatore)}); }
+      else { d = 'dev-' + rnd(10); fino = c.reset && c.reset.fino && c.reset.fino > now ? c.reset.fino : dur ? usi[0] + dur : null; st.dispositivi[d] = {id: d, nome: c.nome || '', codice: code, at: now, fino, ua: short(req.headers.get('user-agent')), allenatore: !!c.allenatore}; }
       await save(st);
-      return out({ok: true, nome: c.nome || '', fino, rinnovo: !!old}, 200, setCookie(await sign({d, r: 'u', n: c.nome || '', i: now, f: fino}, admin)));
+      return out({ok: true, nome: c.nome || '', fino, rinnovo: !!old, allenatore: !!(c.allenatore || old?.allenatore)}, 200, setCookie(await sign({d, r: 'u', n: c.nome || '', i: now, f: fino}, admin)));
     }
     if (a === 'fbInvia'){
       if (!me) return out({ok: false, error: 'app non attivata'}, 403);
@@ -202,9 +204,15 @@ export default async (req, context) => {
       const giorni = Math.min(60, Math.max(1, parseInt(body.giorni, 10) || 7));          // tempo per attivarlo
       const durata = Math.min(1095, Math.max(1, parseInt(body.durata, 10) || 30));        // durata dell'accesso dopo l'attivazione
       let code; do { code = rnd(8); } while (st.codici[code]);
-      st.codici[code] = {codice: code, nome: short(body.nome).trim(), creato: now, scade: now + giorni * 864e5, durata, usi: []};
+      st.codici[code] = {codice: code, nome: short(body.nome).trim(), creato: now, scade: now + giorni * 864e5, durata, usi: [], allenatore: !!body.allenatore};
       await save(st);
-      return out({ok: true, codice: code.slice(0, 4) + '-' + code.slice(4), scade: st.codici[code].scade, durata, nome: st.codici[code].nome});
+      return out({ok: true, codice: code.slice(0, 4) + '-' + code.slice(4), scade: st.codici[code].scade, durata, nome: st.codici[code].nome, allenatore: !!body.allenatore});
+    }
+    // 🎓 codice allenatore: si può dare o togliere anche dopo (vale per tutti i dispositivi attivati con quel codice)
+    if (a === 'allenatore'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      c.allenatore = !!body.on; for (const d of Object.values(st.dispositivi)) if (d.codice === c.codice && !d.admin) d.allenatore = !!body.on;
+      await save(st); return out({ok: true, allenatore: c.allenatore});
     }
     // crediti tolti a mano da Croby (es. consumi che vede su Netlify) e costo di ogni versione caricata
     if (a === 'creditiTogli' || a === 'creditiCosto' || a === 'creditiAnnulla'){
@@ -225,7 +233,7 @@ export default async (req, context) => {
     }
     if (a === 'lista'){
       const VISTO = {}, USO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); if (!st.dispositivi[id].admin) USO[id] = usoSum(await getUso(id)); }));
-      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null}));
+      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null, allenatore: !!c.allenatore}));
       const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, uso: USO[d.id] || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d}));
       return out({ok: true, codici, dispositivi});
     }
