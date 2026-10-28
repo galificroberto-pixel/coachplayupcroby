@@ -2,7 +2,7 @@
 // Solo il proprietario (password in CPU_ADMIN su Netlify) crea codici; ogni codice si usa UNA volta
 // Su iPhone/iPad (Safari e app installata hanno memorie separate) lo stesso codice si può reinserire UNA volta entro 24 ore
 // nell'app installata: resta lo stesso dispositivo, con la stessa scadenza.
-// Azioni (POST JSON o GET):  stato · attiva {codice} · admin {password} · nuovo {nome, giorni, allenatore} · allenatore {codice, on} · lista · blocca {id} · sblocca {id} · esci
+// Azioni (POST JSON o GET):  stato · bkInfo {crea} · bkPut {id, i, n, d, size} · bkMeta {codice} · bkGet {codice, id, i} · bkLink {codice} · attiva {codice} · admin {password} · nuovo {nome, giorni, allenatore} · allenatore {codice, on} · lista · blocca {id} · sblocca {id} · esci
 // Recensioni e consigli: fbInvia {tipo, stelle, testo} (giocatori attivati) · fbLista · fbSegna {id|tutti, letto, arch} · fbElimina {id} · fbEliminaLetti · rinomina {codice, nome} (solo proprietario) · fbMiei · fbEliminaMio {id} (giocatore, solo messaggi già letti)
 const enc = new TextEncoder();
 const b64u = bytes => Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -54,13 +54,17 @@ function usoSum(u){ const now = Date.now(), day = t => new Date(t).toLocaleDateS
   const r = {oggi: 0, s7: 0, s30: 0, tot: 0, n7: 0, n30: 0, ntot: 0, giorni30: 0, ultimo: null, sez: {}, g14: {}};
   const d14 = day(now - 13 * 864e5);
   for (const [k, v] of Object.entries(u.days || {})){ const sec = v.s || 0, n = v.n || 0; r.tot += sec; r.ntot += n; if (k === oggi) r.oggi += sec; if (k >= d7){ r.s7 += sec; r.n7 += n; } if (k >= d30){ r.s30 += sec; r.n30 += n; if (sec > 0) r.giorni30++; for (const [t, x] of Object.entries(v.t || {})) r.sez[t] = (r.sez[t] || 0) + x; } if (k >= d14) r.g14[k] = sec; if (sec > 0 && (!r.ultimo || k > r.ultimo)) r.ultimo = k; }
+  // ⏱ tempi misurati sul telefono (mediana in millisecondi): apertura, Trova le fasi, Analizza
+  const med = a => { const b = (a || []).map(x => Array.isArray(x) ? x[0] : x).filter(x => x > 0).sort((p, q) => p - q); return b.length ? b[Math.floor(b.length / 2)] : null; };
+  if (u.perf){ r.perf = {open: med(u.perf.open), fasi: med(u.perf.fasi), ana: med(u.perf.ana), model: med(u.perf.model), n: (u.perf.fasi || []).length + (u.perf.ana || []).length, dev: u.perfDev || null};
+    const vs = (u.perf.fasi || []).filter(x => Array.isArray(x) && x[1] > 0).map(x => x[0] / x[1]); if (vs.length) r.perf.fasiSec = vs.sort((p, q) => p - q)[Math.floor(vs.length / 2)]; }
   return r; }
 async function getVisto(d){ const s = await store(); return (await s.get('visto/' + d, {type: 'json'}).catch(() => null))?.t || null; }
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '5.21';
-const SRV_BUILD = '5.21-35e6c4ab';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '5.90';
+const SRV_BUILD = '5.90-c0112e46';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -172,6 +176,40 @@ export default async (req, context) => {
         ver: short(body.ver).slice(0, 12), lang: short(body.lang).slice(0, 4), ua: short(req.headers.get('user-agent')), letto: false, arch: false, ricevuto: now});
       return out({ok: true, id});
     }
+    // ☁️ backup online: l'app manda la copia di sicurezza a pezzi (la funzione accetta al massimo 6 MB per volta) e la ritrova
+    // con un codice di ripristino (XXXX-XXXX). Si tiene solo l'ultimo backup di ogni codice, al massimo 60 MB.
+    if (a === 'bkInfo' || a === 'bkPut' || a === 'bkMeta' || a === 'bkGet' || a === 'bkLink'){
+      if (!me) return out({ok: false, error: 'app non attivata'}, 403);
+      const s = await store(), MAXB = 60 * 1048576, MAXP = 40, CH = 2600000;
+      const dv = st.dispositivi[me.d] || null; if (dv && dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const fmtC = c => c.slice(0, 4) + '-' + c.slice(4);
+      const getC = async c => (await s.get('bkc/' + c, {type: 'json'}).catch(() => null)) || null;
+      const delParts = async (c, id, n) => { if (!s.delete || !id) return; for (let i = 0; i < (n || 0); i++){ try { await s.delete(`bk/${c}/${id}/${i}`); } catch {} } };
+      if (a === 'bkInfo'){
+        let c = dv?.bk || null;
+        if (!c && body.crea && dv){ for (let t = 0; t < 5 && !c; t++){ const x = rnd(8); if (!(await getC(x))) c = x; } dv.bk = c; await save(st); }
+        const m = c ? await getC(c) : null; return out({ok: true, codice: c ? fmtC(c) : null, at: m?.at || null, size: m?.size || 0, nome: m?.nome || dv?.nome || ''});
+      }
+      if (a === 'bkPut'){
+        const c = dv?.bk; if (!c) return out({ok: false, error: 'codice di ripristino mancante'}, 400);
+        const id = /^[A-Za-z0-9-]{6,40}$/.test(body.id || '') ? body.id : null, i = parseInt(body.i, 10), n = parseInt(body.n, 10), d = typeof body.d === 'string' ? body.d : null;
+        if (!id || !(n >= 1 && n <= MAXP) || !(i >= 0 && i < n) || d == null || d.length > CH) return out({ok: false, error: 'pezzo non valido'}, 400);
+        if (n * CH > MAXB + CH) return out({ok: false, error: 'backup troppo grande'}, 413);
+        await s.setJSON(`bk/${c}/${id}/${i}`, {d});
+        if (i === n - 1){ const old = await getC(c); const size = parseInt(body.size, 10) || 0;
+          await s.setJSON('bkc/' + c, {id, n, size, at: now, d: me.d, nome: dv?.nome || old?.nome || ''});
+          if (old && old.id !== id) await delParts(c, old.id, old.n); }
+        return out({ok: true, i, fine: i === n - 1});
+      }
+      const c = normCode(body.codice).slice(0, 8);
+      if (a === 'bkLink'){ const m = c.length === 8 ? await getC(c) : null; if (!m) return out({ok: false, error: 'codice di ripristino non trovato'}, 404); if (dv){ dv.bk = c; await save(st); } return out({ok: true, codice: fmtC(c)}); }
+      const m = c.length === 8 ? await getC(c) : null;
+      if (!m){ await new Promise(r => setTimeout(r, 800)); return out({ok: false, error: 'codice di ripristino non trovato'}, 404); }
+      if (a === 'bkMeta') return out({ok: true, codice: fmtC(c), at: m.at, size: m.size, n: m.n, id: m.id, nome: m.nome || ''});
+      const i = parseInt(body.i, 10); if (!(i >= 0 && i < m.n) || body.id !== m.id) return out({ok: false, error: 'pezzo non valido'}, 400);
+      const part = await s.get(`bk/${c}/${m.id}/${i}`, {type: 'json'}).catch(() => null); if (!part) return out({ok: false, error: 'backup incompleto'}, 404);
+      return out({ok: true, i, d: part.d});
+    }
     if (a === 'uso'){
       if (!me || me.r === 'a') return out({ok: true, skip: true});
       const dv = st.dispositivi[me.d]; if (!dv || dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
@@ -187,6 +225,9 @@ export default async (req, context) => {
         D.s = Math.min(D.s + sec, 24 * 3600); D.n += n; add += sec;
         for (const [t, x] of Object.entries(v.t || {})){ const tk = SEZ.includes(t) ? t : 'altro'; D.t[tk] = (D.t[tk] || 0) + Math.min(Math.max(0, parseInt(x, 10) || 0), 20 * 3600); }
       }
+      const PF = body.perf && typeof body.perf === 'object' ? body.perf : null;
+      if (PF){ u.perf ||= {}; for (const k of ['open', 'fasi', 'ana', 'model']){ const L = Array.isArray(PF[k]) ? PF[k].slice(-20) : []; for (const x of L){ const v = Array.isArray(x) ? [Math.round(+x[0] || 0), Math.round((+x[1] || 0) * 10) / 10] : Math.round(+x || 0); const ms = Array.isArray(v) ? v[0] : v; if (ms > 0 && ms < 3600e3) (u.perf[k] ||= []).push(v); } if (u.perf[k]) u.perf[k] = u.perf[k].slice(-30); }
+        if (PF.dev && typeof PF.dev === 'object') u.perfDev = {cpu: parseInt(PF.dev.cpu, 10) || null, mem: +PF.dev.mem || null, gpu: short(PF.dev.gpu), ua: short(req.headers.get('user-agent'))}; }
       if (bid){ u.ids.push(bid); u.ids = u.ids.slice(-40); }
       const keys = Object.keys(u.days).sort(); while (keys.length > 400) delete u.days[keys.shift()];
       await s.setJSON('uso/' + me.d, u); return out({ok: true, add});
@@ -234,7 +275,8 @@ export default async (req, context) => {
     if (a === 'lista'){
       const VISTO = {}, USO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); if (!st.dispositivi[id].admin) USO[id] = usoSum(await getUso(id)); }));
       const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null, allenatore: !!c.allenatore}));
-      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, uso: USO[d.id] || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d}));
+      const BK = {}; await Promise.all(Object.values(st.dispositivi).filter(d => d.bk).slice(0, 300).map(async d => { const s2 = await store(); BK[d.id] = await s2.get('bkc/' + d.bk, {type: 'json'}).catch(() => null); }));
+      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, uso: USO[d.id] || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d, bk: d.bk ? d.bk.slice(0, 4) + '-' + d.bk.slice(4) : null, bkAt: BK[d.id]?.at || null, bkSize: BK[d.id]?.size || 0}));
       return out({ok: true, codici, dispositivi});
     }
     // blocca / sblocca un giocatore: tutti i dispositivi attivati con il suo codice

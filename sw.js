@@ -1,6 +1,6 @@
 // Coach Play Up – service worker: alla prima apertura salva tutta l'app sul dispositivo,
 // poi funziona anche senza internet. Con internet controlla se c'è una versione nuova.
-const CACHE = 'coach-play-up-v5.21-35e6c4ab';
+const CACHE = 'coach-play-up-v5.90-c0112e46';
 const FILES = [
 "./",
 "./icons/android-maskable-192.png",
@@ -41,7 +41,7 @@ const FILES = [
 "./pose/tf.js"
 ];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
-self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== 'cpu-condivisi').map(k => caches.delete(k)))).then(() => self.clients.claim())); });
+self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== 'cpu-condivisi' && k !== 'cpu-modelli').map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
   const r = e.request;
   // file condiviso con l'app (Android: WhatsApp → Condividi → Coach Play Up): lo metto da parte e apro l'app che chiede se ripristinarlo
@@ -53,6 +53,8 @@ self.addEventListener('fetch', e => {
   const url = new URL(r.url); if (url.origin !== location.origin) return;
   if (url.pathname.startsWith('/.netlify/')) return; // collegamento a internet: mai dalla cache
   if (url.pathname.endsWith('version.json')){ e.respondWith(fetch(r, {cache: 'no-store'})); return; }
+  // modello di precisione (12 MB): si scarica solo se serve e resta sul dispositivo anche dopo gli aggiornamenti
+  if (url.pathname.includes('/pose/thunder')){ e.respondWith(caches.open('cpu-modelli').then(c => c.match(r, {ignoreSearch: true}).then(hit => hit || fetch(r).then(res => { if (res.ok) c.put(r, res.clone()); return res; })))); return; }
   // pagina: prima la rete (per avere sempre l'ultima versione), senza rete quella salvata
   if (r.mode === 'navigate'){ e.respondWith(fetch(r).catch(() => caches.match('./index.html', {ignoreSearch: true}))); return; }
   // librerie, modelli e icone: dal dispositivo
