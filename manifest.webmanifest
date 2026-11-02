@@ -56,7 +56,16 @@
             ".json",
             "text/plain",
             ".txt",
-            "application/octet-stream"
+            "application/octet-stream",
+            "application/pdf",
+            ".pdf",
+            "image/*",
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".heic",
+            ".heif"
           ]
         }
       ]
