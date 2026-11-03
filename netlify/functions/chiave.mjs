@@ -63,8 +63,8 @@ async function getVisto(d){ const s = await store(); return (await s.get('visto/
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '6.80';
-const SRV_BUILD = '6.80-e81e2cb0';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '7.30';
+const SRV_BUILD = '7.30-700b3d25';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -98,7 +98,8 @@ export default async (req, context) => {
         try { const s = await store(); if (s.list){ const ks = (await s.list({prefix: 'err/'})).blobs.map(b => b.key); errNuovi = (await Promise.all(ks.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(x => x && !x.letto).length; } } catch {} }
       const cod = me.r !== 'a' && dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '';
       const allenatore = me.r === 'a' || !!dv?.allenatore || !!(dv?.codice && st.codici[dv.codice]?.allenatore);
-      return out({ok: true, attivo: true, admin: me.r === 'a', allenatore, nome: me.n || '', fino: f, codice: cod, fbNuovi, errNuovi, lucchetto: true}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
+      const lezioni = me.r !== 'a' && dv?.codice ? (st.codici[dv.codice]?.lez || []).map(x => ({id: x.id, at: x.at, nota: x.nota || '', fatta: x.fatta || null})) : [];
+      return out({ok: true, attivo: true, admin: me.r === 'a', allenatore, nome: me.n || '', fino: f, codice: cod, fbNuovi, errNuovi, lucchetto: true, lezioni}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
     }
     if (a === 'esci') return out({ok: true}, 200, delCookie);
     // 🐞 errori dai telefoni: uno per tipo (stesso messaggio + punto + versione), con il conteggio e chi l'ha avuto
@@ -244,6 +245,21 @@ export default async (req, context) => {
       if (a === 'fbEliminaMio'){ const x = mine.find(y => y.id === body.id); if (!x) return out({ok: false, error: 'messaggio non trovato'}, 404); if (!x.letto && !x.arch) return out({ok: false, error: 'non ancora letto da Croby'}, 400); await fbDel(x.id); return out({ok: true}); }
       return out({ok: true, list: mine.slice().reverse().slice(0, 30).map(x => ({id: x.id, at: x.at, tipo: x.tipo, stelle: x.stelle, testo: String(x.testo || '').slice(0, 200), letto: !!(x.letto || x.arch)}))});
     }
+    // 🎓 il giocatore ha finito una lezione che Croby gli aveva assegnato
+    if (a === 'lezFatta'){
+      if (!me || me.r === 'a') return out({ok: true, skip: true});
+      const dv = st.dispositivi[me.d], c = dv?.codice && st.codici[dv.codice]; if (!c) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const x = (c.lez || []).find(y => y.id === String(body.id || '')); if (!x) return out({ok: true, n: 0});
+      x.fatta = now; x.q = Math.min(3, Math.max(0, parseInt(body.q, 10) || 0)); await save(st); return out({ok: true, n: 1});
+    }
+    // 🎓 progressi nella Scuola di bowling (lezioni fatte, livello, esami): li vede Croby nella sua classe
+    if (a === 'scProg'){
+      if (!me || me.r === 'a') return out({ok: true, skip: true});
+      const dv = st.dispositivi[me.d], c = dv?.codice && st.codici[dv.codice]; if (!c || dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const I = x => Math.min(999, Math.max(0, parseInt(x, 10) || 0));
+      c.sc = {n: I(body.n), tot: I(body.tot), lv: Math.min(20, I(body.lv)), esami: (Array.isArray(body.esami) ? body.esami : []).map(I).filter(x => x > 0 && x < 21).slice(0, 20), last: Number(body.last) > 0 && Number(body.last) <= now ? Number(body.last) : null, at: now};
+      await save(st); return out({ok: true});
+    }
     // da qui in poi: solo il proprietario
     if (!me || me.r !== 'a') return out({ok: false, error: 'solo il proprietario'}, 403);
     if (a === 'nuovo'){
@@ -279,7 +295,7 @@ export default async (req, context) => {
     }
     if (a === 'lista'){
       const VISTO = {}, USO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); if (!st.dispositivi[id].admin) USO[id] = usoSum(await getUso(id)); }));
-      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null, allenatore: !!c.allenatore, tag: c.tag || [], nota: c.nota || '', max: c.max || 1}));
+      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null, allenatore: !!c.allenatore, tag: c.tag || [], nota: c.nota || '', max: c.max || 1, lez: c.lez || [], sc: c.sc || null}));
       const BK = {}; await Promise.all(Object.values(st.dispositivi).filter(d => d.bk).slice(0, 300).map(async d => { const s2 = await store(); BK[d.id] = await s2.get('bkc/' + d.bk, {type: 'json'}).catch(() => null); }));
       const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, uso: USO[d.id] || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d, bk: d.bk ? d.bk.slice(0, 4) + '-' + d.bk.slice(4) : null, bkAt: BK[d.id]?.at || null, bkSize: BK[d.id]?.size || 0}));
       return out({ok: true, codici, dispositivi});
@@ -351,6 +367,14 @@ export default async (req, context) => {
       await save(st); return out({ok: true, scade: c.scade});
     }
     // 🏷 etichette e nota di un giocatore (squadra, categoria, quota pagata…): restano sul codice
+    // 🎓 assegna (o togli) una lezione della Scuola di bowling a un giocatore: compare nella Home del suo telefono
+    if (a === 'assegnaLezione'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      const id = String(body.id || '').replace(/[^a-z0-9]/g, '').slice(0, 20); if (!id) return out({ok: false, error: 'lezione non valida'}, 400);
+      c.lez = (c.lez || []).filter(x => x.id !== id);
+      if (!body.togli) c.lez = [...c.lez, {id, at: now, nota: String(body.nota || '').slice(0, 200)}].slice(-12);
+      await save(st); return out({ok: true, lez: c.lez});
+    }
     if (a === 'etichette'){
       const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
       if (Array.isArray(body.tag)) c.tag = [...new Set(body.tag.map(t => String(t || '').trim().slice(0, 24)).filter(Boolean))].slice(0, 8);
