@@ -63,8 +63,8 @@ async function getVisto(d){ const s = await store(); return (await s.get('visto/
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '7.51';
-const SRV_BUILD = '7.51-3c068e2f';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '7.80';
+const SRV_BUILD = '7.80-7065f9d6';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -98,8 +98,9 @@ export default async (req, context) => {
         try { const s = await store(); if (s.list){ const ks = (await s.list({prefix: 'err/'})).blobs.map(b => b.key); errNuovi = (await Promise.all(ks.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(x => x && !x.letto).length; } } catch {} }
       const cod = me.r !== 'a' && dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '';
       const allenatore = me.r === 'a' || !!dv?.allenatore || !!(dv?.codice && st.codici[dv.codice]?.allenatore);
+      let msgs = []; if (me.r !== 'a'){ try { const s = await store(); msgs = ((await s.get('msg/' + me.d, {type: 'json'}).catch(() => null))?.list || []).filter(m => !m.letto).slice(-5); } catch {} }
       const lezioni = me.r !== 'a' && dv?.codice ? (st.codici[dv.codice]?.lez || []).map(x => ({id: x.id, at: x.at, nota: x.nota || '', fatta: x.fatta || null})) : [];
-      return out({ok: true, attivo: true, admin: me.r === 'a', allenatore, nome: me.n || '', fino: f, codice: cod, fbNuovi, errNuovi, lucchetto: true, lezioni}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
+      return out({ok: true, attivo: true, admin: me.r === 'a', allenatore, nome: me.n || '', fino: f, codice: cod, fbNuovi, errNuovi, lucchetto: true, lezioni, msgs}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
     }
     if (a === 'esci') return out({ok: true}, 200, delCookie);
     // 🐞 errori dai telefoni: uno per tipo (stesso messaggio + punto + versione), con il conteggio e chi l'ha avuto
@@ -119,6 +120,7 @@ export default async (req, context) => {
         const dev = /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows|Macintosh|Linux/.test(ua) ? 'PC' : '?', os = String(e.os || '').slice(0, 40);
         const tag = who + ' · ' + (os && os.startsWith(dev === 'iPhone' ? 'iOS' : dev) ? os : dev + (os ? ' ' + os : ''));
         if (!x.chi.includes(tag)) x.chi = [...x.chi, tag].slice(-15);
+        if (me && me.r !== 'a' && me.d && !(x.devs || []).includes(me.d)) x.devs = [...(x.devs || []), me.d].slice(-40);   // a chi mandare l'avviso “ci sto lavorando / risolto”
         x.extra = {tab: String(e.tab || '').slice(0, 10), lang: String(e.lang || '').slice(0, 4), app: !!e.app, scr: String(e.scr || '').slice(0, 12), pagina: String(e.pagina || '').slice(0, 30)};
         await s.setJSON(k, x); n++;
       }
@@ -183,10 +185,10 @@ export default async (req, context) => {
       return out({ok: true, id});
     }
     // ☁️ backup online: l'app manda la copia di sicurezza a pezzi (la funzione accetta al massimo 6 MB per volta) e la ritrova
-    // con un codice di ripristino (XXXX-XXXX). Si tiene solo l'ultimo backup di ogni codice, al massimo 60 MB.
+    // con un codice di ripristino (XXXX-XXXX). Si tiene solo l'ultimo backup di ogni codice, al massimo 100 MB.
     if (a === 'bkInfo' || a === 'bkPut' || a === 'bkMeta' || a === 'bkGet' || a === 'bkLink'){
       if (!me) return out({ok: false, error: 'app non attivata'}, 403);
-      const s = await store(), MAXB = 60 * 1048576, MAXP = 40, CH = 2600000;
+      const s = await store(), MAXB = 100 * 1048576, MAXP = 60, CH = 2600000;
       const dv = st.dispositivi[me.d] || null; if (dv && dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
       const fmtC = c => c.slice(0, 4) + '-' + c.slice(4);
       const getC = async c => (await s.get('bkc/' + c, {type: 'json'}).catch(() => null)) || null;
@@ -200,7 +202,7 @@ export default async (req, context) => {
         const c = dv?.bk; if (!c) return out({ok: false, error: 'codice di ripristino mancante'}, 400);
         const id = /^[A-Za-z0-9-]{6,40}$/.test(body.id || '') ? body.id : null, i = parseInt(body.i, 10), n = parseInt(body.n, 10), d = typeof body.d === 'string' ? body.d : null;
         if (!id || !(n >= 1 && n <= MAXP) || !(i >= 0 && i < n) || d == null || d.length > CH) return out({ok: false, error: 'pezzo non valido'}, 400);
-        if (n * CH > MAXB + CH) return out({ok: false, error: 'backup troppo grande'}, 413);
+        if ((parseInt(body.size, 10) || 0) > MAXB || (n - 1) * 2400000 > MAXB) return out({ok: false, error: 'backup troppo grande'}, 413);
         await s.setJSON(`bk/${c}/${id}/${i}`, {d});
         if (i === n - 1){ const old = await getC(c); const size = parseInt(body.size, 10) || 0;
           await s.setJSON('bkc/' + c, {id, n, size, at: now, d: me.d, nome: dv?.nome || old?.nome || ''});
@@ -257,8 +259,16 @@ export default async (req, context) => {
       if (!me || me.r === 'a') return out({ok: true, skip: true});
       const dv = st.dispositivi[me.d], c = dv?.codice && st.codici[dv.codice]; if (!c || dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
       const I = x => Math.min(999, Math.max(0, parseInt(x, 10) || 0));
-      c.sc = {n: I(body.n), tot: I(body.tot), lv: Math.min(20, I(body.lv)), esami: (Array.isArray(body.esami) ? body.esami : []).map(I).filter(x => x > 0 && x < 21).slice(0, 20), last: Number(body.last) > 0 && Number(body.last) <= now ? Number(body.last) : null, at: now};
+      c.sc = {n: I(body.n), tot: I(body.tot), lv: Math.min(20, I(body.lv)), esami: (Array.isArray(body.esami) ? body.esami : []).map(I).filter(x => x > 0 && x < 21).slice(0, 20), last: Number(body.last) > 0 && Number(body.last) <= now ? Number(body.last) : null, at: now,
+        k: (Array.isArray(body.k) ? body.k : []).slice(0, 6).map(x => ({n: String(x?.n || '').slice(0, 30), t: I(x?.t), m: I(x?.m)})), al: I(body.al)};
       await save(st); return out({ok: true});
+    }
+    // 💬 messaggi di Croby al giocatore (es. “sto sistemando il problema che hai avuto”): il giocatore li segna come letti
+    if (a === 'msgLetto'){
+      if (!me || me.r === 'a') return out({ok: true, skip: true});
+      const s = await store(), k = 'msg/' + me.d, M = (await s.get(k, {type: 'json'}).catch(() => null)) || {list: []}, ids = Array.isArray(body.ids) ? body.ids.map(String) : null; let n = 0;
+      for (const m of M.list) if (!m.letto && (!ids || ids.includes(m.id))){ m.letto = now; n++; }
+      if (n) await s.setJSON(k, M); return out({ok: true, n});
     }
     // da qui in poi: solo il proprietario
     if (!me || me.r !== 'a') return out({ok: false, error: 'solo il proprietario'}, 403);
@@ -331,6 +341,16 @@ export default async (req, context) => {
     if (a === 'annulla'){
       const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
       c.revocato = true; await save(st); return out({ok: true});
+    }
+    // 🛠 avvisa chi ha avuto un errore: “ci sto lavorando” oppure “risolto” (arriva nell'app alla prossima apertura)
+    if (a === 'errAvvisa'){
+      const s = await store(), tipo = body.tipo === 'risolto' ? 'risolto' : 'lavoro', x = await s.get('err/' + String(body.sig || ''), {type: 'json'}).catch(() => null); if (!x) return out({ok: false, error: 'errore non trovato'}, 404);
+      const nomi = (x.chi || []).map(c => String(c).split(' · ')[0].trim()).filter(nm => nm && !['Croby', 'giocatore', '–'].includes(nm));
+      const T = new Set(x.devs || []); for (const d of Object.values(st.dispositivi)) if (!d.admin && d.nome && nomi.includes(d.nome)) T.add(d.id);
+      let n = 0; for (const d of T){ if (!st.dispositivi[d] || st.dispositivi[d].admin) continue; const k = 'msg/' + d, M = (await s.get(k, {type: 'json'}).catch(() => null)) || {list: []};
+        M.list = [...M.list.filter(m => !(m.sig === x.sig && m.tipo === tipo)), {id: 'm' + rnd(8), at: now, tipo, sig: x.sig, err: String(x.msg || '').slice(0, 90), letto: false}].slice(-20); await s.setJSON(k, M); n++; }
+      x.avvisi = {...(x.avvisi || {}), [tipo]: {at: now, n}}; if (tipo === 'risolto') x.letto = true; await s.setJSON('err/' + x.sig, x);
+      return out({ok: true, n, nomi});
     }
     if (a === 'errLista' || a === 'errSegna' || a === 'errElimina'){
       const s = await store(), keys = s.list ? (await s.list({prefix: 'err/'})).blobs.map(b => b.key) : [];
