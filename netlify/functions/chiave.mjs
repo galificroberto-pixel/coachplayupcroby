@@ -63,8 +63,8 @@ async function getVisto(d){ const s = await store(); return (await s.get('visto/
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '7.86';
-const SRV_BUILD = '7.86-8ea14cdc';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '7.88';
+const SRV_BUILD = '7.88-765c603d';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -269,6 +269,43 @@ export default async (req, context) => {
       const s = await store(), k = 'msg/' + me.d, M = (await s.get(k, {type: 'json'}).catch(() => null)) || {list: []}, ids = Array.isArray(body.ids) ? body.ids.map(String) : null; let n = 0;
       for (const m of M.list) if (!m.letto && (!ids || ids.includes(m.id))){ m.letto = now; n++; }
       if (n) await s.setJSON(k, M); return out({ok: true, n});
+    }
+    // 🔗 7.87: collegamento allenatore ↔ app dell'allievo (con il consenso dell'allievo): l'allievo condivide la borsa e il suo modo di tirare,
+    // l'allenatore gli prepara il piano gara sul pattern e glielo manda. Ogni collegamento è un blob a parte: lnk/<CODICE>; indici lnkc/<allenatore> e lnks/<allievo>
+    if (a.startsWith('lnk')){
+      if (!me) return out({ok: false, error: 'app non attivata'}, 403);
+      const S = await store(), dvL = st.dispositivi[me.d], isCoach = me.r === 'a' || !!dvL?.allenatore || !!(dvL?.codice && st.codici[dvL.codice]?.allenatore);
+      const ck = me.r === 'a' ? 'admin' : me.d, get = async k => await S.get(k, {type: 'json'}).catch(() => null), idx = async k => (await get(k))?.list || [];
+      const setIdx = async (k, L) => S.setJSON(k, {list: [...new Set(L)].slice(-200)}), tokOf = t => String(t || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+      const clean = v => String(v ?? '').slice(0, 60), num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : ''; };
+      if (a === 'lnkNew'){ if (!isCoach) return out({ok: false, error: 'solo gli allenatori'}, 403);
+        let t = rnd(6); for (let i = 0; i < 5 && await get('lnk/' + t); i++) t = rnd(6);
+        await S.setJSON('lnk/' + t, {t, coach: ck, cn: clean(me.n || dvL?.nome || 'Allenatore'), nome: clean(body.nome), at: now, stu: null, plans: []}); await setIdx('lnkc/' + ck, [...await idx('lnkc/' + ck), t]);
+        return out({ok: true, codice: t.slice(0, 3) + '-' + t.slice(3)}); }
+      if (a === 'lnkJoin'){ const t = tokOf(body.codice), L = await get('lnk/' + t); if (!L) return out({ok: false, error: 'codice allenatore non trovato: controlla le lettere'}, 404);
+        if (L.stu && L.stu !== me.d) return out({ok: false, error: 'questo codice è già stato usato da un’altra app: chiedine uno nuovo al tuo allenatore'}, 409);
+        if (L.coach === ck) return out({ok: false, error: 'non puoi collegarti a te stesso'}, 400);
+        L.stu = me.d; L.sn = clean(me.n || dvL?.nome || ''); L.jat = now; await S.setJSON('lnk/' + t, L); await setIdx('lnks/' + me.d, [...await idx('lnks/' + me.d), t]);
+        return out({ok: true, cn: L.cn, nome: L.nome}); }
+      if (a === 'lnkPush'){ const T = await idx('lnks/' + me.d); if (!T.length) return out({ok: true, n: 0});
+        const bag = (Array.isArray(body.bag) ? body.bag : []).slice(0, 24).map(b => ({id: clean(b.id), name: clean(b.name), cover: clean(b.cover), core: clean(b.core), rg: num(b.rg), diff: num(b.diff), mb: num(b.mb), grit: num(b.grit), weight: num(b.weight), usura: clean(b.usura), forza: num(b.forza), imgUrl: /^https:\/\//.test(String(b.imgUrl || '')) ? String(b.imgUrl).slice(0, 300) : ''}));
+        const pr = body.prof || {}, prof = {hand: clean(pr.hand), style: clean(pr.style), speed: num(pr.speed), rev: clean(pr.rev)};
+        let n = 0; for (const t of T){ const L = await get('lnk/' + t); if (!L || L.stu !== me.d) continue; L.bag = bag; L.prof = prof; L.upd = now; await S.setJSON('lnk/' + t, L); n++; } return out({ok: true, n}); }
+      if (a === 'lnkCoach'){ if (!isCoach) return out({ok: false, error: 'solo gli allenatori'}, 403); const T = await idx('lnkc/' + ck), list = [];
+        for (const t of T){ const L = await get('lnk/' + t); if (L && L.coach === ck) list.push({codice: t.slice(0, 3) + '-' + t.slice(3), nome: L.nome, at: L.at, collegato: !!L.stu, sn: L.sn || '', jat: L.jat || null, upd: L.upd || null, bag: L.bag || [], prof: L.prof || {}, plans: (L.plans || []).map(x => ({at: x.at, pat: x.pat, nota: x.nota, visto: x.visto || null}))}); }
+        return out({ok: true, list}); }
+      if (a === 'lnkPlan'){ if (!isCoach) return out({ok: false, error: 'solo gli allenatori'}, 403); const t = tokOf(body.codice), L = await get('lnk/' + t); if (!L || L.coach !== ck) return out({ok: false, error: 'collegamento non trovato'}, 404);
+        if (!L.stu) return out({ok: false, error: 'l’allievo non ha ancora collegato la sua app'}, 400); const P = body.pat || {};
+        L.plans = [...(L.plans || []), {at: now, pat: {n: clean(P.n), l: num(P.l), v: num(P.v), r: clean(P.r)}, nota: String(body.nota || '').slice(0, 300)}].slice(-12); await S.setJSON('lnk/' + t, L); return out({ok: true}); }
+      if (a === 'lnkMine'){ const T = await idx('lnks/' + me.d), list = [];
+        for (const t of T){ const L = await get('lnk/' + t); if (L && L.stu === me.d) list.push({codice: t.slice(0, 3) + '-' + t.slice(3), cn: L.cn, jat: L.jat, upd: L.upd || null, plans: (L.plans || []).map(x => ({at: x.at, pat: x.pat, nota: x.nota, visto: x.visto || null}))}); }
+        return out({ok: true, list}); }
+      if (a === 'lnkSeen'){ const t = tokOf(body.codice), L = await get('lnk/' + t); if (!L || L.stu !== me.d) return out({ok: true, n: 0}); let n = 0; for (const x of L.plans || []) if (x.at === +body.at && !x.visto){ x.visto = now; n++; } if (n) await S.setJSON('lnk/' + t, L); return out({ok: true, n}); }
+      if (a === 'lnkDel'){ const t = tokOf(body.codice), L = await get('lnk/' + t); if (!L) return out({ok: true});
+        if (L.stu === me.d){ L.stu = null; L.bag = []; L.prof = {}; L.sn = ''; await S.setJSON('lnk/' + t, L); await setIdx('lnks/' + me.d, (await idx('lnks/' + me.d)).filter(x => x !== t)); return out({ok: true}); }
+        if (L.coach === ck){ if (S.delete) await S.delete('lnk/' + t); else await S.setJSON('lnk/' + t, {t, coach: null}); await setIdx('lnkc/' + ck, (await idx('lnkc/' + ck)).filter(x => x !== t)); if (L.stu) await setIdx('lnks/' + L.stu, (await idx('lnks/' + L.stu)).filter(x => x !== t)); return out({ok: true}); }
+        return out({ok: false, error: 'non è un tuo collegamento'}, 403); }
+      return out({ok: false, error: 'azione sconosciuta'}, 400);
     }
     // da qui in poi: solo il proprietario
     if (!me || me.r !== 'a') return out({ok: false, error: 'solo il proprietario'}, 403);
