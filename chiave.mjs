@@ -1,0 +1,452 @@
+// Coach Play Up – chiavi di attivazione (Netlify Functions + Netlify Blobs, gratuito).
+// Solo il proprietario (password in CPU_ADMIN su Netlify) crea codici; ogni codice si usa UNA volta
+// Su iPhone/iPad (Safari e app installata hanno memorie separate) lo stesso codice si può reinserire UNA volta entro 24 ore
+// nell'app installata: resta lo stesso dispositivo, con la stessa scadenza.
+// Azioni (POST JSON o GET):  stato · bkInfo {crea} · bkPut {id, i, n, d, size} · bkMeta {codice} · bkGet {codice, id, i} · bkLink {codice} · attiva {codice} · admin {password} · nuovo {nome, giorni, allenatore} · allenatore {codice, on} · lista · blocca {id} · sblocca {id} · esci
+// Recensioni e consigli: fbInvia {tipo, stelle, testo} (giocatori attivati) · fbLista · fbSegna {id|tutti, letto, arch} · fbElimina {id} · fbEliminaLetti · rinomina {codice, nome} · etichette {codice, tag[], nota} (solo proprietario) · fbMiei · fbEliminaMio {id} (giocatore, solo messaggi già letti)
+const enc = new TextEncoder();
+const b64u = bytes => Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+let KEY = null, KEYSRC = null;
+async function hmacKey(admin){
+  if (KEY && KEYSRC === admin) return KEY;
+  const raw = await crypto.subtle.digest('SHA-256', enc.encode('coach-play-up|' + admin));
+  KEY = await crypto.subtle.importKey('raw', raw, {name: 'HMAC', hash: 'SHA-256'}, false, ['sign', 'verify']); KEYSRC = admin; return KEY;
+}
+async function sign(obj, admin){ const p = b64u(enc.encode(JSON.stringify(obj))); const s = new Uint8Array(await crypto.subtle.sign('HMAC', await hmacKey(admin), enc.encode(p))); return p + '.' + b64u(s); }
+async function verify(tok, admin){
+  try { const [p, s] = String(tok || '').split('.'); if (!p || !s) return null;
+    const ok = await crypto.subtle.verify('HMAC', await hmacKey(admin), Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64'), enc.encode(p));
+    return ok ? JSON.parse(Buffer.from(p.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString()) : null; } catch { return null; }
+}
+const H = {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'netlify-cdn-cache-control': 'no-store'};
+const COOKIE_AGE = 400 * 24 * 3600;
+const out = (o, s = 200, cookie) => { const h = new Headers(H); if (cookie != null) h.append('set-cookie', cookie); return new Response(JSON.stringify(o), {status: s, headers: h}); };
+const setCookie = tok => `cpu_key=${tok}; Path=/; Max-Age=${COOKIE_AGE}; HttpOnly; Secure; SameSite=Lax`;
+const delCookie = 'cpu_key=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax';
+const cookieOf = (req, name) => { const m = (req.headers.get('cookie') || '').match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)')); return m ? decodeURIComponent(m[1]) : ''; };
+const ALPH = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const rnd = n => { const b = crypto.getRandomValues(new Uint8Array(n)); return [...b].map(x => ALPH[x % ALPH.length]).join(''); };
+const normCode = c => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);   // senza trattini e spazi
+const eqSafe = (a, b) => { a = String(a); b = String(b); let d = a.length ^ b.length; for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0); return d === 0; };
+async function store(){ if (globalThis.__CPU_DB) return globalThis.__CPU_DB; const {getStore} = await import('@netlify/blobs'); return getStore({name: 'coach-play-up-chiavi', consistency: 'strong'}); }
+async function load(){ const s = await store(); return (await s.get('stato', {type: 'json'})) || {codici: {}, dispositivi: {}, errori: []}; }
+async function save(st){ const s = await store(); await s.setJSON('stato', st); }
+// recensioni e consigli dei giocatori: archivio a parte, lo legge solo il proprietario
+// ogni messaggio è un file a parte (fb/<id>): due giocatori che scrivono insieme, o Croby che segna “letto”
+// mentre arriva un messaggio, non possono più cancellarsi a vicenda (prima era un elenco unico riscritto ogni volta)
+async function legacyFb(){ const s = await store(); return (await s.get('feedback', {type: 'json'})) || {list: []}; }
+async function fbKeys(){ const s = await store(); if (!s.list) return []; const r = await s.list({prefix: 'fb/'}); return (r.blobs || []).map(b => b.key); }
+async function loadFb(){
+  const s = await store(), old = await legacyFb();
+  // trasloco una volta sola dei messaggi del vecchio elenco nei file singoli (niente si perde)
+  if (old.list?.length){ for (const x of old.list) if (x?.id && !(await s.get('fb/' + x.id, {type: 'json'}))) await s.setJSON('fb/' + x.id, x); await s.setJSON('feedback', {list: [], spostati: Date.now(), n: old.list.length}); }
+  const keys = await fbKeys(), list = (await Promise.all(keys.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(Boolean);
+  return {list: list.sort((a, b) => a.at - b.at)};
+}
+async function fbPut(x){ const s = await store(); await s.setJSON('fb/' + x.id, x); }
+async function fbDel(id){ const s = await store(); if (s.delete) await s.delete('fb/' + id); }
+// ultimo accesso di ogni dispositivo: file a parte, così l'apertura dell'app non riscrive l'elenco di codici e dispositivi
+async function setVisto(d){ const s = await store(); const k = 'visto/' + d, v = await s.get(k, {type: 'json'}).catch(() => null); if (!v || Date.now() - v.t > 3600e3) await s.setJSON(k, {t: Date.now()}); }
+// tempo di utilizzo: un file per dispositivo (uso/<id>) con i secondi e le aperture di ogni giorno e le sezioni usate
+const SEZ = ['home', 'reg', 'oil', 'ana', 'game', 'dati', 'altro'];
+async function getUso(d){ const s = await store(); return (await s.get('uso/' + d, {type: 'json'}).catch(() => null)) || {days: {}}; }
+function usoSum(u){ const now = Date.now(), day = t => new Date(t).toLocaleDateString('sv-SE', {timeZone: 'Europe/Rome'}), oggi = day(now), d7 = day(now - 6 * 864e5), d30 = day(now - 29 * 864e5);
+  const r = {oggi: 0, s7: 0, s30: 0, tot: 0, n7: 0, n30: 0, ntot: 0, giorni30: 0, ultimo: null, sez: {}, g14: {}};
+  const d14 = day(now - 13 * 864e5);
+  for (const [k, v] of Object.entries(u.days || {})){ const sec = v.s || 0, n = v.n || 0; r.tot += sec; r.ntot += n; if (k === oggi) r.oggi += sec; if (k >= d7){ r.s7 += sec; r.n7 += n; } if (k >= d30){ r.s30 += sec; r.n30 += n; if (sec > 0) r.giorni30++; for (const [t, x] of Object.entries(v.t || {})) r.sez[t] = (r.sez[t] || 0) + x; } if (k >= d14) r.g14[k] = sec; if (sec > 0 && (!r.ultimo || k > r.ultimo)) r.ultimo = k; }
+  // ⏱ tempi misurati sul telefono (mediana in millisecondi): apertura, Trova le fasi, Analizza
+  const med = a => { const b = (a || []).map(x => Array.isArray(x) ? x[0] : x).filter(x => x > 0).sort((p, q) => p - q); return b.length ? b[Math.floor(b.length / 2)] : null; };
+  if (u.perf){ r.perf = {open: med(u.perf.open), fasi: med(u.perf.fasi), ana: med(u.perf.ana), model: med(u.perf.model), n: (u.perf.fasi || []).length + (u.perf.ana || []).length, dev: u.perfDev || null};
+    const vs = (u.perf.fasi || []).filter(x => Array.isArray(x) && x[1] > 0).map(x => x[0] / x[1]); if (vs.length) r.perf.fasiSec = vs.sort((p, q) => p - q)[Math.floor(vs.length / 2)]; }
+  return r; }
+async function getVisto(d){ const s = await store(); return (await s.get('visto/' + d, {type: 'json'}).catch(() => null))?.t || null; }
+const short = s => String(s || '').slice(0, 60);
+// 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
+// quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
+const SRV_VER = '8.08';
+const SRV_BUILD = '8.08-e19964f5';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+let DEPLOY_OK = false;
+async function noteDeploy(context){
+  if (DEPLOY_OK) return; DEPLOY_OK = true;
+  try {
+    const id = String(context?.deploy?.id || process.env.DEPLOY_ID || SRV_BUILD).slice(0, 40), s = await store(), D = (await s.get('crediti', {type: 'json'}).catch(() => null)) || {deploy: [], lettura: null};
+    if (D.deploy.some(x => x.id === id)) return;
+    D.deploy = [...D.deploy, {id, v: SRV_VER, at: Date.now()}].slice(-120); await s.setJSON('crediti', D);
+  } catch {}
+}
+export default async (req, context) => {
+  const admin = process.env.CPU_ADMIN || globalThis.__CPU_ADMIN || '';
+  const u = new URL(req.url);
+  let body = {}; if (req.method === 'POST'){ try { body = await req.json(); } catch {} }
+  const a = body.a || u.searchParams.get('a') || 'stato';
+  if (!admin) return out({ok: true, lucchetto: false});
+  const me = await verify(cookieOf(req, 'cpu_key'), admin);
+  await noteDeploy(context);
+  try {
+    if (a === 'stato'){
+      if (!me) return out({ok: false, attivo: false, lucchetto: true});
+      const st = await load(), dv = st.dispositivi[me.d];
+      if (me.r !== 'a' && dv && dv.codice && st.codici[dv.codice]?.bloccato) dv.bloccato = true;   // giocatore bloccato: tutti i suoi dispositivi
+      // bloccato: l'app non si apre, ma la chiave resta sul dispositivo così con “Sblocca” torna a funzionare senza un codice nuovo
+      if (me.r !== 'a' && dv?.bloccato) return out({ok: false, attivo: false, bloccato: true, lucchetto: true});
+      if (me.r !== 'a' && !dv) return out({ok: false, attivo: false, lucchetto: true}, 200, delCookie);
+      // accesso scaduto: l'app si ferma finché Croby non manda un codice nuovo (i dati sul telefono restano)
+      if (me.r !== 'a' && dv.fino && Date.now() > dv.fino) return out({ok: false, attivo: false, scaduto: true, fino: dv.fino, nome: dv.nome || me.n || '', lucchetto: true});
+      if (dv) await setVisto(me.d).catch(() => {});
+      const f = me.r === 'a' ? null : (dv?.fino || null);
+      let fbNuovi = 0, errNuovi = 0; if (me.r === 'a'){ try { fbNuovi = (await loadFb()).list.filter(x => !x.letto && !x.arch).length; } catch {}
+        try { const s = await store(); if (s.list){ const ks = (await s.list({prefix: 'err/'})).blobs.map(b => b.key); errNuovi = (await Promise.all(ks.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(x => x && !x.letto).length; } } catch {} }
+      const cod = me.r !== 'a' && dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '';
+      const allenatore = me.r === 'a' || !!dv?.allenatore || !!(dv?.codice && st.codici[dv.codice]?.allenatore);
+      let msgs = []; if (me.r !== 'a'){ try { const s = await store(); msgs = ((await s.get('msg/' + me.d, {type: 'json'}).catch(() => null))?.list || []).filter(m => !m.letto).slice(-5); } catch {} }
+      const lezioni = me.r !== 'a' && dv?.codice ? (st.codici[dv.codice]?.lez || []).map(x => ({id: x.id, at: x.at, nota: x.nota || '', fatta: x.fatta || null})) : [];
+      return out({ok: true, attivo: true, admin: me.r === 'a', allenatore, nome: me.n || '', fino: f, codice: cod, fbNuovi, errNuovi, lucchetto: true, lezioni, msgs}, 200, setCookie(await sign({...me, f}, admin)));   // la chiave si rinnova a ogni apertura, con la scadenza aggiornata
+    }
+    if (a === 'esci') return out({ok: true}, 200, delCookie);
+    // 🐞 errori dai telefoni: uno per tipo (stesso messaggio + punto + versione), con il conteggio e chi l'ha avuto
+    if (a === 'errLog'){
+      const L = Array.isArray(body.list) ? body.list.slice(0, 10) : []; if (!L.length) return out({ok: true, n: 0});
+      const s = await store(), ua = short(req.headers.get('user-agent')), now = Date.now();
+      let who = '–'; if (me){ if (me.r === 'a') who = 'Croby'; else { try { const st0 = await load(); who = st0.dispositivi[me.d]?.nome || me.n || 'giocatore'; } catch { who = me.n || 'giocatore'; } } }
+      let n = 0;
+      for (const e of L){
+        const msg = String(e.msg || '').slice(0, 300).trim(); if (!msg) continue;
+        const where = String(e.where || '').slice(0, 160), ver = String(e.ver || '').slice(0, 12), stack = String(e.stack || '').slice(0, 1500);
+        let h = 0; for (const ch of msg + '|' + where + '|' + ver) h = (h * 31 + ch.charCodeAt(0)) | 0; const sig = 'e' + (h >>> 0).toString(36);
+        const k = 'err/' + sig, old = await s.get(k, {type: 'json'}).catch(() => null);
+        if (!old && s.list && (await s.list({prefix: 'err/'})).blobs.length >= 300) continue;   // tetto: niente spam
+        const x = old || {sig, msg, where, ver, stack, first: now, count: 0, chi: [], letto: false};
+        x.count += Math.min(Math.max(1, parseInt(e.n, 10) || 1), 50); x.last = now; x.letto = false; if (!x.stack && stack) x.stack = stack;
+        const dev = /iPhone|iPad/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Windows|Macintosh|Linux/.test(ua) ? 'PC' : '?', os = String(e.os || '').slice(0, 40);
+        const tag = who + ' · ' + (os && os.startsWith(dev === 'iPhone' ? 'iOS' : dev) ? os : dev + (os ? ' ' + os : ''));
+        if (!x.chi.includes(tag)) x.chi = [...x.chi, tag].slice(-15);
+        if (me && me.r !== 'a' && me.d && !(x.devs || []).includes(me.d)) x.devs = [...(x.devs || []), me.d].slice(-40);   // a chi mandare l'avviso “ci sto lavorando / risolto”
+        x.extra = {tab: String(e.tab || '').slice(0, 10), lang: String(e.lang || '').slice(0, 4), app: !!e.app, scr: String(e.scr || '').slice(0, 12), pagina: String(e.pagina || '').slice(0, 30)};
+        await s.setJSON(k, x); n++;
+      }
+      return out({ok: true, n});
+    }
+    // protezione dai tentativi a raffica: massimo 12 errori in 15 minuti per tutto il sito
+    const st = await load(); const now = Date.now(); st.errori = (st.errori || []).filter(t => now - t < 15 * 60e3);
+    const tooMany = st.errori.length >= 12;
+    const fail = async (msg, s = 403) => { st.errori.push(now); await save(st); return out({ok: false, error: msg}, s); };
+    if (a === 'admin'){
+      if (tooMany) return out({ok: false, error: 'troppi tentativi: riprova fra 15 minuti'}, 429);
+      if (!eqSafe(body.password || '', admin)) return fail('password sbagliata');
+      const d = 'adm-' + rnd(10); st.dispositivi[d] = {id: d, nome: 'Croby (proprietario)', admin: true, at: now, ua: short(req.headers.get('user-agent'))}; await save(st);
+      return out({ok: true, admin: true}, 200, setCookie(await sign({d, r: 'a', n: 'Croby', i: now}, admin)));
+    }
+    if (a === 'attiva'){
+      if (tooMany) return out({ok: false, error: 'troppi tentativi: riprova fra 15 minuti'}, 429);
+      const code = normCode(body.codice), c = st.codici[code];
+      if (!c || c.revocato || c.bloccato) return fail('codice non valido');
+      if (body.soloAllenatore && !c.allenatore) return out({ok: false, error: 'questo non è un codice allenatore'}, 400);   // dall'Area allenatore: un codice da giocatore non si consuma
+      if (c.scade && now > c.scade && !c.usi?.length) return fail('codice scaduto: chiedine uno nuovo');
+      const usi = c.usi || [], uaNow = req.headers.get('user-agent') || '';
+      const apple = x => /iPhone|iPad|iPod|Macintosh/.test(x || '');   // (nell'elenco l'user-agent è accorciato)
+      // iPhone: Safari → app sulla schermata Home (stesso telefono, memorie separate): si riusa lo stesso posto
+      const first = usi.length === 1 ? Object.values(st.dispositivi).find(x => x.codice === code && !x.admin) : null;
+      const andr = x => /Android/.test(x || '');
+      // stesso telefono, memorie separate: iPhone (Safari → app sulla Home) e Android (WhatsApp → Chrome / app installata), entro 24 ore
+      const gemello = first && now - usi[0] <= 24 * 3600e3 && ((apple(first.ua) && apple(uaNow) && !/Android|Windows/.test(uaNow)) || (andr(first.ua) && andr(uaNow))) && !(me && me.d === first.id);
+      // 📱 Croby può permettere 2 o 3 dispositivi con lo stesso codice (es. telefono + tablet): stessa scadenza del primo
+      const mine = Object.values(st.dispositivi).filter(x => x.codice === code && !x.admin), extra = usi.length && !gemello && (c.max || 1) > 1 && mine.length < (c.max || 1) && !(me && mine.some(x => x.id === me.d));
+      if (extra){ const fino0 = Math.max(0, ...mine.map(x => x.fino || 0)) || null, d2 = 'dev-' + rnd(10); usi.push(now); c.usi = usi;
+        st.dispositivi[d2] = {id: d2, nome: c.nome || '', codice: code, at: now, fino: fino0, ua: short(uaNow), allenatore: !!c.allenatore}; await save(st);
+        return out({ok: true, nome: c.nome || '', fino: fino0, rinnovo: false, altro: true, allenatore: !!c.allenatore}, 200, setCookie(await sign({d: d2, r: 'u', n: c.nome || '', i: now, f: fino0}, admin))); }
+      if (usi.length && !gemello) return fail('codice già usato: ogni codice vale una volta sola');
+      usi.push(now); c.usi = usi;
+      if (gemello){ first.app = now; first.ua = short(uaNow); await save(st);
+        return out({ok: true, nome: c.nome || '', fino: first.fino || null, rinnovo: false, ios: true}, 200, setCookie(await sign({d: first.id, r: 'u', n: c.nome || '', i: now, f: first.fino || null}, admin))); }
+      const dur = c.durata ? c.durata * 864e5 : 0;
+      // rinnovo: stesso dispositivo già attivato (anche se scaduto) → stesso posto, il tempo nuovo si aggiunge a quello che restava
+      const old = me && me.r !== 'a' ? st.dispositivi[me.d] : null;
+      let d, fino;
+      if (old){ d = me.d; fino = dur ? Math.max(now, old.fino || now) + dur : null; Object.assign(old, {codice: code, nome: c.nome || old.nome || '', fino, rinnovi: (old.rinnovi || 0) + 1, rinnovato: now, bloccato: false, allenatore: !!(old.allenatore || c.allenatore)}); }
+      else { d = 'dev-' + rnd(10); fino = c.reset && c.reset.fino && c.reset.fino > now ? c.reset.fino : dur ? usi[0] + dur : null; st.dispositivi[d] = {id: d, nome: c.nome || '', codice: code, at: now, fino, ua: short(req.headers.get('user-agent')), allenatore: !!c.allenatore}; }
+      await save(st);
+      return out({ok: true, nome: c.nome || '', fino, rinnovo: !!old, allenatore: !!(c.allenatore || old?.allenatore)}, 200, setCookie(await sign({d, r: 'u', n: c.nome || '', i: now, f: fino}, admin)));
+    }
+    if (a === 'fbInvia'){
+      if (!me) return out({ok: false, error: 'app non attivata'}, 403);
+      const dv = st.dispositivi[me.d];
+      if (me.r !== 'a' && (!dv || dv.bloccato)) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const testo = String(body.testo || '').replace(/\s+$/g, '').slice(0, 1500), tipo = ['recensione', 'consiglio', 'problema'].includes(body.tipo) ? body.tipo : 'consiglio';
+      const stelle = tipo === 'recensione' ? Math.min(5, Math.max(1, parseInt(body.stelle, 10) || 0)) || null : null;
+      if (testo.trim().length < 3 && !stelle) return out({ok: false, error: 'scrivi qualcosa'}, 400);
+      // stesso messaggio rimandato (es. dalla coda senza internet): non si duplica
+      const cid = /^[A-Za-z0-9-]{6,40}$/.test(body.cid || '') ? 'fb-' + body.cid : null;
+      if (cid){ const s = await store(); if (await s.get('fb/' + cid, {type: 'json'})) return out({ok: true, id: cid, gia: true}); }
+      const fb = await loadFb(), mine = fb.list.filter(x => x.d === me.d && now - x.at < 864e5);
+      if (mine.length >= 20) return out({ok: false, error: 'troppi messaggi oggi: riprova domani'}, 429);
+      const id = cid || 'fb-' + rnd(8);
+      await fbPut({id, at: Number(body.at) > now - 30 * 864e5 && Number(body.at) <= now ? Number(body.at) : now, d: me.d, nome: dv?.nome || me.n || '', codice: dv?.codice ? dv.codice.slice(0, 4) + '-' + dv.codice.slice(4) : '', tipo, stelle, testo,
+        ver: short(body.ver).slice(0, 12), lang: short(body.lang).slice(0, 4), ua: short(req.headers.get('user-agent')), letto: false, arch: false, ricevuto: now});
+      return out({ok: true, id});
+    }
+    // ☁️ backup online: l'app manda la copia di sicurezza a pezzi (la funzione accetta al massimo 6 MB per volta) e la ritrova
+    // con un codice di ripristino (XXXX-XXXX). Si tiene solo l'ultimo backup di ogni codice, al massimo 100 MB.
+    if (a === 'bkInfo' || a === 'bkPut' || a === 'bkMeta' || a === 'bkGet' || a === 'bkLink'){
+      if (!me) return out({ok: false, error: 'app non attivata'}, 403);
+      const s = await store(), MAXB = 100 * 1048576, MAXP = 60, CH = 2600000;
+      const dv = st.dispositivi[me.d] || null; if (dv && dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const fmtC = c => c.slice(0, 4) + '-' + c.slice(4);
+      const getC = async c => (await s.get('bkc/' + c, {type: 'json'}).catch(() => null)) || null;
+      const delParts = async (c, id, n) => { if (!s.delete || !id) return; for (let i = 0; i < (n || 0); i++){ try { await s.delete(`bk/${c}/${id}/${i}`); } catch {} } };
+      if (a === 'bkInfo'){
+        let c = dv?.bk || null;
+        if (!c && body.crea && dv){ for (let t = 0; t < 5 && !c; t++){ const x = rnd(8); if (!(await getC(x))) c = x; } dv.bk = c; await save(st); }
+        const m = c ? await getC(c) : null; return out({ok: true, codice: c ? fmtC(c) : null, at: m?.at || null, size: m?.size || 0, nome: m?.nome || dv?.nome || ''});
+      }
+      if (a === 'bkPut'){
+        const c = dv?.bk; if (!c) return out({ok: false, error: 'codice di ripristino mancante'}, 400);
+        const id = /^[A-Za-z0-9-]{6,40}$/.test(body.id || '') ? body.id : null, i = parseInt(body.i, 10), n = parseInt(body.n, 10), d = typeof body.d === 'string' ? body.d : null;
+        if (!id || !(n >= 1 && n <= MAXP) || !(i >= 0 && i < n) || d == null || d.length > CH) return out({ok: false, error: 'pezzo non valido'}, 400);
+        if ((parseInt(body.size, 10) || 0) > MAXB || (n - 1) * 2400000 > MAXB) return out({ok: false, error: 'backup troppo grande'}, 413);
+        await s.setJSON(`bk/${c}/${id}/${i}`, {d});
+        if (i === n - 1){ const old = await getC(c); const size = parseInt(body.size, 10) || 0;
+          await s.setJSON('bkc/' + c, {id, n, size, at: now, d: me.d, nome: dv?.nome || old?.nome || ''});
+          if (old && old.id !== id) await delParts(c, old.id, old.n); }
+        return out({ok: true, i, fine: i === n - 1});
+      }
+      const c = normCode(body.codice).slice(0, 8);
+      if (a === 'bkLink'){ const m = c.length === 8 ? await getC(c) : null; if (!m) return out({ok: false, error: 'codice di ripristino non trovato'}, 404); if (dv){ dv.bk = c; await save(st); } return out({ok: true, codice: fmtC(c)}); }
+      const m = c.length === 8 ? await getC(c) : null;
+      if (!m){ await new Promise(r => setTimeout(r, 800)); return out({ok: false, error: 'codice di ripristino non trovato'}, 404); }
+      if (a === 'bkMeta') return out({ok: true, codice: fmtC(c), at: m.at, size: m.size, n: m.n, id: m.id, nome: m.nome || ''});
+      const i = parseInt(body.i, 10); if (!(i >= 0 && i < m.n) || body.id !== m.id) return out({ok: false, error: 'pezzo non valido'}, 400);
+      const part = await s.get(`bk/${c}/${m.id}/${i}`, {type: 'json'}).catch(() => null); if (!part) return out({ok: false, error: 'backup incompleto'}, 404);
+      return out({ok: true, i, d: part.d});
+    }
+    if (a === 'uso'){
+      if (!me || me.r === 'a') return out({ok: true, skip: true});
+      const dv = st.dispositivi[me.d]; if (!dv || dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const s = await store(), u = await getUso(me.d);
+      // stesso pacchetto rimandato (risposta persa): non si conta due volte
+      const bid = /^[A-Za-z0-9-]{6,40}$/.test(body.id || '') ? body.id : null; u.ids ||= [];
+      if (bid && u.ids.includes(bid)) return out({ok: true, gia: true});
+      const oggi = new Date(now + 16 * 3600e3).toISOString().slice(0, 10);   // il giorno del telefono (anche fusi orari avanti, es. Filippine)
+      const B = body.buf && typeof body.buf === 'object' ? body.buf : {}; let add = 0;
+      for (const [k, v] of Object.entries(B).slice(0, 40)){
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || k > oggi || k < new Date(now - 60 * 864e5).toISOString().slice(0, 10)) continue;
+        const D = (u.days[k] ||= {s: 0, n: 0, t: {}}), sec = Math.min(Math.max(0, parseInt(v.s, 10) || 0), 20 * 3600), n = Math.min(Math.max(0, parseInt(v.n, 10) || 0), 200);
+        D.s = Math.min(D.s + sec, 24 * 3600); D.n += n; add += sec;
+        for (const [t, x] of Object.entries(v.t || {})){ const tk = SEZ.includes(t) ? t : 'altro'; D.t[tk] = (D.t[tk] || 0) + Math.min(Math.max(0, parseInt(x, 10) || 0), 20 * 3600); }
+      }
+      const PF = body.perf && typeof body.perf === 'object' ? body.perf : null;
+      if (PF){ u.perf ||= {}; for (const k of ['open', 'fasi', 'ana', 'model']){ const L = Array.isArray(PF[k]) ? PF[k].slice(-20) : []; for (const x of L){ const v = Array.isArray(x) ? [Math.round(+x[0] || 0), Math.round((+x[1] || 0) * 10) / 10] : Math.round(+x || 0); const ms = Array.isArray(v) ? v[0] : v; if (ms > 0 && ms < 3600e3) (u.perf[k] ||= []).push(v); } if (u.perf[k]) u.perf[k] = u.perf[k].slice(-30); }
+        if (PF.dev && typeof PF.dev === 'object') u.perfDev = {cpu: parseInt(PF.dev.cpu, 10) || null, mem: +PF.dev.mem || null, gpu: short(PF.dev.gpu), ua: short(req.headers.get('user-agent'))}; }
+      if (bid){ u.ids.push(bid); u.ids = u.ids.slice(-40); }
+      const keys = Object.keys(u.days).sort(); while (keys.length > 400) delete u.days[keys.shift()];
+      await s.setJSON('uso/' + me.d, u); return out({ok: true, add});
+    }
+    // il giocatore vede i suoi messaggi (con “letto da Croby”) e può togliere quelli già letti
+    if (a === 'fbMiei' || a === 'fbEliminaMio'){
+      if (!me || me.r === 'a') return out({ok: false, error: 'app non attivata'}, 403);
+      const fb = await loadFb(), mine = fb.list.filter(x => x.d === me.d);
+      if (a === 'fbEliminaMio'){ const x = mine.find(y => y.id === body.id); if (!x) return out({ok: false, error: 'messaggio non trovato'}, 404); if (!x.letto && !x.arch) return out({ok: false, error: 'non ancora letto da Croby'}, 400); await fbDel(x.id); return out({ok: true}); }
+      return out({ok: true, list: mine.slice().reverse().slice(0, 30).map(x => ({id: x.id, at: x.at, tipo: x.tipo, stelle: x.stelle, testo: String(x.testo || '').slice(0, 200), letto: !!(x.letto || x.arch)}))});
+    }
+    // 🎓 il giocatore ha finito una lezione che Croby gli aveva assegnato
+    if (a === 'lezFatta'){
+      if (!me || me.r === 'a') return out({ok: true, skip: true});
+      const dv = st.dispositivi[me.d], c = dv?.codice && st.codici[dv.codice]; if (!c) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const x = (c.lez || []).find(y => y.id === String(body.id || '')); if (!x) return out({ok: true, n: 0});
+      x.fatta = now; x.q = Math.min(3, Math.max(0, parseInt(body.q, 10) || 0)); await save(st); return out({ok: true, n: 1});
+    }
+    // 🎓 progressi nella Scuola di bowling (lezioni fatte, livello, esami): li vede Croby nella sua classe
+    if (a === 'scProg'){
+      if (!me || me.r === 'a') return out({ok: true, skip: true});
+      const dv = st.dispositivi[me.d], c = dv?.codice && st.codici[dv.codice]; if (!c || dv.bloccato) return out({ok: false, error: 'dispositivo non attivo'}, 403);
+      const I = x => Math.min(999, Math.max(0, parseInt(x, 10) || 0));
+      c.sc = {n: I(body.n), tot: I(body.tot), lv: Math.min(20, I(body.lv)), esami: (Array.isArray(body.esami) ? body.esami : []).map(I).filter(x => x > 0 && x < 21).slice(0, 20), last: Number(body.last) > 0 && Number(body.last) <= now ? Number(body.last) : null, at: now,
+        k: (Array.isArray(body.k) ? body.k : []).slice(0, 6).map(x => ({n: String(x?.n || '').slice(0, 30), t: I(x?.t), m: I(x?.m)})), al: I(body.al)};
+      await save(st); return out({ok: true});
+    }
+    // 💬 messaggi di Croby al giocatore (es. “sto sistemando il problema che hai avuto”): il giocatore li segna come letti
+    if (a === 'msgLetto'){
+      if (!me || me.r === 'a') return out({ok: true, skip: true});
+      const s = await store(), k = 'msg/' + me.d, M = (await s.get(k, {type: 'json'}).catch(() => null)) || {list: []}, ids = Array.isArray(body.ids) ? body.ids.map(String) : null; let n = 0;
+      for (const m of M.list) if (!m.letto && (!ids || ids.includes(m.id))){ m.letto = now; n++; }
+      if (n) await s.setJSON(k, M); return out({ok: true, n});
+    }
+    // 🔗 7.87: collegamento allenatore ↔ app dell'allievo (con il consenso dell'allievo): l'allievo condivide la borsa e il suo modo di tirare,
+    // l'allenatore gli prepara il piano gara sul pattern e glielo manda. Ogni collegamento è un blob a parte: lnk/<CODICE>; indici lnkc/<allenatore> e lnks/<allievo>
+    if (a.startsWith('lnk')){
+      if (!me) return out({ok: false, error: 'app non attivata'}, 403);
+      const S = await store(), dvL = st.dispositivi[me.d], isCoach = me.r === 'a' || !!dvL?.allenatore || !!(dvL?.codice && st.codici[dvL.codice]?.allenatore);
+      const ck = me.r === 'a' ? 'admin' : me.d, get = async k => await S.get(k, {type: 'json'}).catch(() => null), idx = async k => (await get(k))?.list || [];
+      const setIdx = async (k, L) => S.setJSON(k, {list: [...new Set(L)].slice(-200)}), tokOf = t => String(t || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+      const clean = v => String(v ?? '').slice(0, 60), num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : ''; };
+      if (a === 'lnkNew'){ if (!isCoach) return out({ok: false, error: 'solo gli allenatori'}, 403);
+        let t = rnd(6); for (let i = 0; i < 5 && await get('lnk/' + t); i++) t = rnd(6);
+        await S.setJSON('lnk/' + t, {t, coach: ck, cn: clean(me.n || dvL?.nome || 'Allenatore'), nome: clean(body.nome), at: now, stu: null, plans: []}); await setIdx('lnkc/' + ck, [...await idx('lnkc/' + ck), t]);
+        return out({ok: true, codice: t.slice(0, 3) + '-' + t.slice(3)}); }
+      if (a === 'lnkJoin'){ const t = tokOf(body.codice), L = await get('lnk/' + t); if (!L) return out({ok: false, error: 'codice allenatore non trovato: controlla le lettere'}, 404);
+        if (L.stu && L.stu !== me.d) return out({ok: false, error: 'questo codice è già stato usato da un’altra app: chiedine uno nuovo al tuo allenatore'}, 409);
+        if (L.coach === ck) return out({ok: false, error: 'non puoi collegarti a te stesso'}, 400);
+        L.stu = me.d; L.sn = clean(me.n || dvL?.nome || ''); L.jat = now; await S.setJSON('lnk/' + t, L); await setIdx('lnks/' + me.d, [...await idx('lnks/' + me.d), t]);
+        return out({ok: true, cn: L.cn, nome: L.nome}); }
+      if (a === 'lnkPush'){ const T = await idx('lnks/' + me.d); if (!T.length) return out({ok: true, n: 0});
+        const bag = (Array.isArray(body.bag) ? body.bag : []).slice(0, 24).map(b => ({id: clean(b.id), name: clean(b.name), cover: clean(b.cover), core: clean(b.core), rg: num(b.rg), diff: num(b.diff), mb: num(b.mb), grit: num(b.grit), weight: num(b.weight), usura: clean(b.usura), forza: num(b.forza), imgUrl: /^https:\/\//.test(String(b.imgUrl || '')) ? String(b.imgUrl).slice(0, 300) : ''}));
+        const pr = body.prof || {}, prof = {hand: clean(pr.hand), style: clean(pr.style), speed: num(pr.speed), rev: clean(pr.rev)};
+        let n = 0; for (const t of T){ const L = await get('lnk/' + t); if (!L || L.stu !== me.d) continue; L.bag = bag; L.prof = prof; L.upd = now; await S.setJSON('lnk/' + t, L); n++; } return out({ok: true, n}); }
+      if (a === 'lnkCoach'){ if (!isCoach) return out({ok: false, error: 'solo gli allenatori'}, 403); const T = await idx('lnkc/' + ck), list = [];
+        for (const t of T){ const L = await get('lnk/' + t); if (L && L.coach === ck) list.push({codice: t.slice(0, 3) + '-' + t.slice(3), nome: L.nome, at: L.at, collegato: !!L.stu, sn: L.sn || '', jat: L.jat || null, upd: L.upd || null, bag: L.bag || [], prof: L.prof || {}, plans: (L.plans || []).map(x => ({at: x.at, pat: x.pat, nota: x.nota, visto: x.visto || null}))}); }
+        return out({ok: true, list}); }
+      if (a === 'lnkPlan'){ if (!isCoach) return out({ok: false, error: 'solo gli allenatori'}, 403); const t = tokOf(body.codice), L = await get('lnk/' + t); if (!L || L.coach !== ck) return out({ok: false, error: 'collegamento non trovato'}, 404);
+        if (!L.stu) return out({ok: false, error: 'l’allievo non ha ancora collegato la sua app'}, 400); const P = body.pat || {};
+        L.plans = [...(L.plans || []), {at: now, pat: {n: clean(P.n), l: num(P.l), v: num(P.v), r: clean(P.r)}, nota: String(body.nota || '').slice(0, 300)}].slice(-12); await S.setJSON('lnk/' + t, L); return out({ok: true}); }
+      if (a === 'lnkMine'){ const T = await idx('lnks/' + me.d), list = [];
+        for (const t of T){ const L = await get('lnk/' + t); if (L && L.stu === me.d) list.push({codice: t.slice(0, 3) + '-' + t.slice(3), cn: L.cn, jat: L.jat, upd: L.upd || null, plans: (L.plans || []).map(x => ({at: x.at, pat: x.pat, nota: x.nota, visto: x.visto || null}))}); }
+        return out({ok: true, list}); }
+      if (a === 'lnkSeen'){ const t = tokOf(body.codice), L = await get('lnk/' + t); if (!L || L.stu !== me.d) return out({ok: true, n: 0}); let n = 0; for (const x of L.plans || []) if (x.at === +body.at && !x.visto){ x.visto = now; n++; } if (n) await S.setJSON('lnk/' + t, L); return out({ok: true, n}); }
+      if (a === 'lnkDel'){ const t = tokOf(body.codice), L = await get('lnk/' + t); if (!L) return out({ok: true});
+        if (L.stu === me.d){ L.stu = null; L.bag = []; L.prof = {}; L.sn = ''; await S.setJSON('lnk/' + t, L); await setIdx('lnks/' + me.d, (await idx('lnks/' + me.d)).filter(x => x !== t)); return out({ok: true}); }
+        if (L.coach === ck){ if (S.delete) await S.delete('lnk/' + t); else await S.setJSON('lnk/' + t, {t, coach: null}); await setIdx('lnkc/' + ck, (await idx('lnkc/' + ck)).filter(x => x !== t)); if (L.stu) await setIdx('lnks/' + L.stu, (await idx('lnks/' + L.stu)).filter(x => x !== t)); return out({ok: true}); }
+        return out({ok: false, error: 'non è un tuo collegamento'}, 403); }
+      return out({ok: false, error: 'azione sconosciuta'}, 400);
+    }
+    // da qui in poi: solo il proprietario
+    if (!me || me.r !== 'a') return out({ok: false, error: 'solo il proprietario'}, 403);
+    if (a === 'nuovo'){
+      const giorni = Math.min(60, Math.max(1, parseInt(body.giorni, 10) || 7));          // tempo per attivarlo
+      const durata = Math.min(1095, Math.max(1, parseInt(body.durata, 10) || 30));        // durata dell'accesso dopo l'attivazione
+      let code; do { code = rnd(8); } while (st.codici[code]);
+      st.codici[code] = {codice: code, nome: short(body.nome).trim(), creato: now, scade: now + giorni * 864e5, durata, usi: [], allenatore: !!body.allenatore};
+      await save(st);
+      return out({ok: true, codice: code.slice(0, 4) + '-' + code.slice(4), scade: st.codici[code].scade, durata, nome: st.codici[code].nome, allenatore: !!body.allenatore});
+    }
+    // 🎓 codice allenatore: si può dare o togliere anche dopo (vale per tutti i dispositivi attivati con quel codice)
+    if (a === 'allenatore'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      c.allenatore = !!body.on; for (const d of Object.values(st.dispositivi)) if (d.codice === c.codice && !d.admin) d.allenatore = !!body.on;
+      await save(st); return out({ok: true, allenatore: c.allenatore});
+    }
+    // crediti tolti a mano da Croby (es. consumi che vede su Netlify) e costo di ogni versione caricata
+    if (a === 'creditiTogli' || a === 'creditiCosto' || a === 'creditiAnnulla'){
+      const s = await store(), D = (await s.get('crediti', {type: 'json'}).catch(() => null)) || {deploy: [], lettura: null};
+      if (a === 'creditiTogli'){ const n = Math.round(+body.n); if (!(n > 0 && n <= 100000)) return out({ok: false, error: 'numero non valido'}, 400); D.manuali = [...(D.manuali || []), {n, at: now, nota: short(body.nota)}].slice(-100); }
+      if (a === 'creditiAnnulla') D.manuali = (D.manuali || []).filter(x => x.at !== +body.at);
+      if (a === 'creditiCosto'){ const co = Math.round(+body.costo); if (!(co >= 0 && co <= 10000)) return out({ok: false, error: 'numero non valido'}, 400); D.lettura = {...(D.lettura || {n: 300, at: now, totale: 300}), costo: co}; }
+      await s.setJSON('crediti', D); return out({ok: true, ...D, ora: now, ver: SRV_VER});
+    }
+    if (a === 'crediti' || a === 'creditiSalva'){
+      const s = await store(), D = (await s.get('crediti', {type: 'json'}).catch(() => null)) || {deploy: [], lettura: null};
+      if (a === 'creditiSalva'){
+        const n = Math.round(+body.n), g = Math.round(+body.giorno || 0), tot = Math.round(+body.totale || 300), co = Math.round(+body.costo || 15);
+        if (!(n >= 0 && n <= 100000)) return out({ok: false, error: 'numero non valido'}, 400);
+        D.lettura = {n, at: now, giorno: g >= 1 && g <= 31 ? g : null, totale: tot >= 1 && tot <= 100000 ? tot : 300, costo: co >= 0 && co <= 10000 ? co : 15}; D.manuali = []; await s.setJSON('crediti', D);
+      }
+      return out({ok: true, ...D, ora: now, ver: SRV_VER});
+    }
+    if (a === 'lista'){
+      const VISTO = {}, USO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); if (!st.dispositivi[id].admin) USO[id] = usoSum(await getUso(id)); }));
+      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null, allenatore: !!c.allenatore, tag: c.tag || [], nota: c.nota || '', max: c.max || 1, lez: c.lez || [], sc: c.sc || null}));
+      const BK = {}; await Promise.all(Object.values(st.dispositivi).filter(d => d.bk).slice(0, 300).map(async d => { const s2 = await store(); BK[d.id] = await s2.get('bkc/' + d.bk, {type: 'json'}).catch(() => null); }));
+      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, uso: USO[d.id] || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d, bk: d.bk ? d.bk.slice(0, 4) + '-' + d.bk.slice(4) : null, bkAt: BK[d.id]?.at || null, bkSize: BK[d.id]?.size || 0}));
+      return out({ok: true, codici, dispositivi});
+    }
+    // blocca / sblocca un giocatore: tutti i dispositivi attivati con il suo codice
+    if (a === 'bloccaGiocatore' || a === 'sbloccaGiocatore'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      const on = a === 'bloccaGiocatore'; c.bloccato = on; let n = 0;
+      for (const d of Object.values(st.dispositivi)) if (d.codice === c.codice && !d.admin){ d.bloccato = on; n++; }
+      await save(st); return out({ok: true, dispositivi: n});
+    }
+    // elimina un giocatore: tolti tutti i suoi dispositivi (sul telefono l'app torna alla pagina del codice; i suoi dati restano lì).
+    // riattiva: lo STESSO codice torna valido (7 giorni per usarlo) e la scadenza dell'accesso resta quella di prima
+    if (a === 'eliminaGiocatore'){
+      const code = normCode(body.codice), c = st.codici[code]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      let n = 0, fino = 0; const s = await store();
+      for (const d of Object.values(st.dispositivi)) if (d.codice === code && !d.admin){ fino = Math.max(fino, d.fino || 0); delete st.dispositivi[d.id]; n++; if (s.delete){ s.delete('visto/' + d.id).catch(() => {}); } }
+      if (body.riattiva){ Object.assign(c, {usi: [], bloccato: false, revocato: false, scade: now + 7 * 864e5, reset: {fino: fino || null, at: now}}); }
+      else delete st.codici[code];
+      await save(st);
+      return out({ok: true, dispositivi: n, riattiva: !!body.riattiva, codice: code.slice(0, 4) + '-' + code.slice(4), nome: c.nome || '', scade: c.scade, durata: c.durata || null, fino: fino || null});
+    }
+    if (a === 'eliminaDispositivo'){
+      const d = st.dispositivi[body.id]; if (!d) return out({ok: false, error: 'dispositivo non trovato'}, 404);
+      if (d.admin && d.id === me.d) return out({ok: false, error: 'non puoi eliminare questo dispositivo mentre lo usi'}, 400);
+      delete st.dispositivi[body.id]; await save(st); return out({ok: true});
+    }
+    if (a === 'blocca' || a === 'sblocca'){
+      const d = st.dispositivi[body.id]; if (!d) return out({ok: false, error: 'dispositivo non trovato'}, 404);
+      if (d.admin) return out({ok: false, error: 'i dispositivi del proprietario non si bloccano da qui'}, 400);
+      d.bloccato = a === 'blocca'; await save(st); return out({ok: true});
+    }
+    if (a === 'annulla'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      c.revocato = true; await save(st); return out({ok: true});
+    }
+    // 🛠 avvisa chi ha avuto un errore: “ci sto lavorando” oppure “risolto” (arriva nell'app alla prossima apertura)
+    if (a === 'errAvvisa'){
+      const s = await store(), tipo = body.tipo === 'risolto' ? 'risolto' : 'lavoro', x = await s.get('err/' + String(body.sig || ''), {type: 'json'}).catch(() => null); if (!x) return out({ok: false, error: 'errore non trovato'}, 404);
+      const nomi = (x.chi || []).map(c => String(c).split(' · ')[0].trim()).filter(nm => nm && !['Croby', 'giocatore', '–'].includes(nm));
+      const T = new Set(x.devs || []); for (const d of Object.values(st.dispositivi)) if (!d.admin && d.nome && nomi.includes(d.nome)) T.add(d.id);
+      let n = 0; for (const d of T){ if (!st.dispositivi[d] || st.dispositivi[d].admin) continue; const k = 'msg/' + d, M = (await s.get(k, {type: 'json'}).catch(() => null)) || {list: []};
+        M.list = [...M.list.filter(m => !(m.sig === x.sig && m.tipo === tipo)), {id: 'm' + rnd(8), at: now, tipo, sig: x.sig, err: String(x.msg || '').slice(0, 90), letto: false}].slice(-20); await s.setJSON(k, M); n++; }
+      x.avvisi = {...(x.avvisi || {}), [tipo]: {at: now, n}}; if (tipo === 'risolto') x.letto = true; await s.setJSON('err/' + x.sig, x);
+      return out({ok: true, n, nomi});
+    }
+    if (a === 'errLista' || a === 'errSegna' || a === 'errElimina'){
+      const s = await store(), keys = s.list ? (await s.list({prefix: 'err/'})).blobs.map(b => b.key) : [];
+      const all = (await Promise.all(keys.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(Boolean);
+      if (a === 'errLista') return out({ok: true, list: all.sort((x, y) => y.last - x.last)});
+      const ids = body.tutti ? all.map(x => x.sig) : [body.sig]; let n = 0;
+      for (const x of all) if (ids.includes(x.sig)){ if (a === 'errElimina'){ if (s.delete) await s.delete('err/' + x.sig); } else { x.letto = body.letto !== false; await s.setJSON('err/' + x.sig, x); } n++; }
+      return out({ok: true, n});
+    }
+    if (a === 'fbLista'){ const fb = await loadFb(); return out({ok: true, list: fb.list.slice().reverse()}); }
+    // si cambia solo il messaggio toccato: un messaggio appena arrivato non viene mai sovrascritto
+    if (a === 'fbSegna'){ const fb = await loadFb(), ids = body.tutti ? fb.list.filter(x => !x.letto).map(x => x.id) : [body.id]; let n = 0;
+      for (const x of fb.list) if (ids.includes(x.id)){ if (body.letto != null) x.letto = !!body.letto; if (body.arch != null){ x.arch = !!body.arch; if (x.arch) x.letto = true; } await fbPut(x); n++; }
+      return out({ok: true, n}); }
+    if (a === 'fbEliminaLetti'){ const fb = await loadFb(); let n = 0; for (const x of fb.list) if (x.letto && !x.arch){ await fbDel(x.id); n++; } return out({ok: true, n}); }
+    // rinomina un giocatore: nome sul codice, sui suoi dispositivi e sui suoi messaggi
+    if (a === 'rinomina'){
+      const code = normCode(body.codice), c = st.codici[code], nome = short(body.nome).trim(); if (!c) return out({ok: false, error: 'codice non trovato'}, 404); if (!nome) return out({ok: false, error: 'scrivi il nome'}, 400);
+      c.nome = nome; const ids = []; for (const d of Object.values(st.dispositivi)) if (d.codice === code && !d.admin){ d.nome = nome; ids.push(d.id); }
+      await save(st);
+      try { const fb = await loadFb(); for (const x of fb.list) if (ids.includes(x.d) && x.nome !== nome){ x.nome = nome; await fbPut(x); } } catch {}
+      return out({ok: true, nome, dispositivi: ids.length});
+    }
+    // 📱 quanti dispositivi può attivare questo codice (1, 2 o 3)
+    if (a === 'limite'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      c.max = Math.min(3, Math.max(1, parseInt(body.max, 10) || 1)); await save(st); return out({ok: true, max: c.max});
+    }
+    // ⏳ più tempo per attivare un codice non ancora usato
+    if (a === 'proroga'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      if ((c.usi || []).length) return out({ok: false, error: 'codice già usato'}, 400);
+      const g = Math.min(60, Math.max(1, parseInt(body.giorni, 10) || 7)); if (c.revocato) return out({ok: false, error: 'codice annullato'}, 400); c.scade = Math.max(c.scade || 0, now) + g * 864e5;
+      await save(st); return out({ok: true, scade: c.scade});
+    }
+    // 🏷 etichette e nota di un giocatore (squadra, categoria, quota pagata…): restano sul codice
+    // 🎓 assegna (o togli) una lezione della Scuola di bowling a un giocatore: compare nella Home del suo telefono
+    if (a === 'assegnaLezione'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      const id = String(body.id || '').replace(/[^a-z0-9]/g, '').slice(0, 20); if (!id) return out({ok: false, error: 'lezione non valida'}, 400);
+      c.lez = (c.lez || []).filter(x => x.id !== id);
+      if (!body.togli) c.lez = [...c.lez, {id, at: now, nota: String(body.nota || '').slice(0, 200)}].slice(-12);
+      await save(st); return out({ok: true, lez: c.lez});
+    }
+    if (a === 'etichette'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      if (Array.isArray(body.tag)) c.tag = [...new Set(body.tag.map(t => String(t || '').trim().slice(0, 24)).filter(Boolean))].slice(0, 8);
+      if (body.nota != null) c.nota = String(body.nota).slice(0, 300);
+      await save(st); return out({ok: true, tag: c.tag || [], nota: c.nota || ''});
+    }
+    // cambia la scadenza di un giocatore attivo (tutti i suoi dispositivi): una data, oppure null = senza scadenza
+    if (a === 'scadenza'){
+      const code = normCode(body.codice), c = st.codici[code]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      const fino = body.fino == null ? null : Math.round(+body.fino); if (fino != null && !(fino > 0)) return out({ok: false, error: 'data non valida'}, 400);
+      let n = 0; for (const d of Object.values(st.dispositivi)) if (d.codice === code && !d.admin){ d.fino = fino; d.cambiata = now; n++; }
+      if (!n) return out({ok: false, error: 'nessun dispositivo attivo per questo giocatore'}, 404);
+      await save(st); return out({ok: true, fino, dispositivi: n});
+    }
+    if (a === 'fbElimina'){ const fb = await loadFb(), x = fb.list.find(y => y.id === body.id); if (x) await fbDel(x.id); return out({ok: true, n: x ? 1 : 0}); }
+    return out({ok: false, error: 'azione sconosciuta'}, 400);
+  } catch (e){ return out({ok: false, error: String(e.message || e)}, 500); }
+};

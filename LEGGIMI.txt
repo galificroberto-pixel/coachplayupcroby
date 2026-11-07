@@ -23,11 +23,11 @@ Trascina la nuova cartella nella scheda Deploys dello stesso progetto.
 Chi ha l'app installata riceve la nuova versione la prima volta che la apre con internet.
 
 COLLEGARLA A INTERNET (gratis, facoltativo)
-Con il collegamento l'app può: cercare RG e differenziale di una palla su 2 fonti
-(Bowwwl + sito del produttore) e confrontarle; scaricare la scheda ufficiale di un
+Con il collegamento l'app può: cercare RG e differenziale di una palla su più fonti
+(sito del produttore, Bowwwl e Bowling Shop Europe) e confrontarle; scaricare la scheda ufficiale di un
 pattern dalla Kegel Pattern Library; controllare le novità dei regolamenti su FISBB,
 USBC e World Bowling. Legge SOLO siti di bowling affidabili (elenco nel file
-netlify/functions/ponte.mjs). Senza collegamento l'app funziona lo stesso.
+netlify/functions/ponte2.mjs). Senza collegamento l'app funziona lo stesso.
 
 Il collegamento è una piccola "funzione" Netlify. Netlify la attiva solo se il sito
 arriva da GitHub (con il trascinamento della cartella NON funziona). Una volta sola:
