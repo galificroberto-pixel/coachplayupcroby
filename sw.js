@@ -1,6 +1,6 @@
 // Coach Play Up – service worker: alla prima apertura salva tutta l'app sul dispositivo,
 // poi funziona anche senza internet. Con internet controlla se c'è una versione nuova.
-const CACHE = 'coach-play-up-v8.01-b39745ce';
+const CACHE = 'coach-play-up-v8.03-1c52d338';
 const FILES = [
 "./",
 "./icons/android-maskable-192.png",
@@ -48,7 +48,8 @@ self.addEventListener('fetch', e => {
   if (r.method === 'POST' && new URL(r.url).searchParams.get('condividi') === '1'){
     e.respondWith((async () => { try { const fd = await r.formData(); const fs = [...fd.getAll('file'), ...[...fd.values()].filter(v => v && typeof v === 'object')].filter((v, i, a) => a.indexOf(v) === i).slice(0, 4);
       const c = await caches.open('cpu-condivisi'); for (let i = 0; i < 5; i++) await c.delete('./__condiviso' + (i ? i : ''));
-      for (let i = 0; i < fs.length; i++){ const f = fs[i]; await c.put('./__condiviso' + (i ? i : ''), new Response(f, {headers: {'x-nome': encodeURIComponent(f.name || 'backup.json'), 'x-tipo': f.type || '', 'x-n': String(fs.length)}})); } } catch {}
+      for (let i = 0; i < fs.length; i++){ const f = fs[i]; await c.put('./__condiviso' + (i ? i : ''), new Response(f, {headers: {'x-nome': encodeURIComponent(f.name || 'backup.json'), 'x-tipo': f.type || '', 'x-n': String(fs.length)}})); }
+      await c.delete('./__testo'); if (!fs.length){ const tx = [fd.get('title'), fd.get('text'), fd.get('url')].filter(v => typeof v === 'string' && v.trim()).join(' '); if (tx) await c.put('./__testo', new Response(tx)); } } catch {}
       return Response.redirect('./?condividi=1', 303); })()); return; }
   if (r.method !== 'GET') return;
   const url = new URL(r.url); if (url.origin !== location.origin) return;
