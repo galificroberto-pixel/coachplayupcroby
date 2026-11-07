@@ -3,7 +3,7 @@
 // Azioni:  ?a=balldb&src=btm|btmbrand|storm|bowwwl&page=N (archivio palle)  ·  ?a=ping  ·  ?a=search&q=...&site=bowwwl.com  ·  ?a=page&url=https://...  ·  ?a=kegel&ids=1,2,3 (schede Kegel Pattern Library)
 const SITES = [
   // archivi e riviste specializzate
-  'bowwwl.com', 'bowlingthismonth.com', 'nationalbowlingacademy.com', 'bowlingball.com', 'bowling.com',
+  'bowwwl.com', 'bowlingthismonth.com', 'nationalbowlingacademy.com', 'bowlingball.com', 'bowling.com', 'bowlingshopeurope.eu',
   // oliatura (Kegel)
   'kegel.net', 'patternlibrary.kegel.net',
   // produttori di palle
