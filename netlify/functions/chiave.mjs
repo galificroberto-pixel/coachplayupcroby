@@ -63,8 +63,8 @@ async function getVisto(d){ const s = await store(); return (await s.get('visto/
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '8.20';
-const SRV_BUILD = '8.20-80d7e524';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '8.25';
+const SRV_BUILD = '8.25-ef179d91';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -308,7 +308,23 @@ export default async (req, context) => {
       return out({ok: false, error: 'azione sconosciuta'}, 400);
     }
     // da qui in poi: solo il proprietario
+    // avviso della prima apertura accettato: si tiene traccia di chi e quando (nome del codice, data, versione del testo)
+    if (a === 'accOk'){
+      if (!me) return out({ok: true, skip: true});
+      const s = await store(); let nome = me.r === 'a' ? 'Croby' : (me.n || ''), codice = '';
+      try { const st0 = await load(), dv = st0.dispositivi[me.d]; if (dv){ nome = dv.nome || nome; codice = dv.codice || ''; } } catch {}
+      const id = me.r === 'a' ? 'admin' : me.d, k = 'acc/' + id, old = await s.get(k, {type: 'json'}).catch(() => null);
+      const x = {d: id, nome: String(nome).slice(0, 80), codice, at: Number(body.at) || Date.now(), tv: String(body.tv || '').slice(0, 8), v: String(body.v || '').slice(0, 12), lang: String(body.lang || '').slice(0, 4), ua: short(req.headers.get('user-agent')), rec: Date.now()};
+      if (old?.at && old.tv === x.tv && old.at <= x.at) return out({ok: true, gia: true});
+      await s.setJSON(k, x); return out({ok: true});
+    }
     if (!me || me.r !== 'a') return out({ok: false, error: 'solo il proprietario'}, 403);
+    if (a === 'accLista'){
+      const s = await store(), keys = s.list ? (await s.list({prefix: 'acc/'})).blobs.map(b => b.key) : [];
+      const all = (await Promise.all(keys.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(Boolean).sort((x, y) => y.at - x.at);
+      const ok = new Set(all.map(x => x.d)), mancano = Object.values(st.dispositivi).filter(d => !d.admin && !d.bloccato && !ok.has(d.id)).sort((x, y) => (y.at || 0) - (x.at || 0)).slice(0, 300).map(d => ({id: d.id, nome: d.nome || '', codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', at: d.at || null}));
+      return out({ok: true, list: all.map(x => ({...x, codice: x.codice ? x.codice.slice(0, 4) + '-' + x.codice.slice(4) : ''})), mancano});
+    }
     if (a === 'nuovo'){
       const giorni = Math.min(60, Math.max(1, parseInt(body.giorni, 10) || 7));          // tempo per attivarlo
       const durata = Math.min(1095, Math.max(1, parseInt(body.durata, 10) || 30));        // durata dell'accesso dopo l'attivazione
