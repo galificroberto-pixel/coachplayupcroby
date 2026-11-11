@@ -46,7 +46,10 @@ async function loadFb(){
 async function fbPut(x){ const s = await store(); await s.setJSON('fb/' + x.id, x); }
 async function fbDel(id){ const s = await store(); if (s.delete) await s.delete('fb/' + id); }
 // ultimo accesso di ogni dispositivo: file a parte, così l'apertura dell'app non riscrive l'elenco di codici e dispositivi
-async function setVisto(d){ const s = await store(); const k = 'visto/' + d, v = await s.get(k, {type: 'json'}).catch(() => null); if (!v || Date.now() - v.t > 3600e3) await s.setJSON(k, {t: Date.now()}); }
+async function setVisto(d, x = {}){ const s = await store(); const k = 'visto/' + d, v = await s.get(k, {type: 'json'}).catch(() => null);
+  // 8.31: anche la versione dell'app e se è installata sulla schermata Home (solo per il pannello di Croby)
+  const ver = /^\d{1,3}\.\d{1,3}$/.test(String(x.v || '')) ? String(x.v) : (v?.v || null), inst = x.i === '1' ? true : x.i === '0' ? false : (v?.i ?? null);
+  if (!v || Date.now() - v.t > 3600e3 || ver !== (v.v || null) || inst !== (v.i ?? null)) await s.setJSON(k, {t: Date.now(), v: ver, i: inst}); }
 // tempo di utilizzo: un file per dispositivo (uso/<id>) con i secondi e le aperture di ogni giorno e le sezioni usate
 const SEZ = ['home', 'reg', 'oil', 'ana', 'game', 'dati', 'altro'];
 async function getUso(d){ const s = await store(); return (await s.get('uso/' + d, {type: 'json'}).catch(() => null)) || {days: {}}; }
@@ -60,11 +63,35 @@ function usoSum(u){ const now = Date.now(), day = t => new Date(t).toLocaleDateS
     const vs = (u.perf.fasi || []).filter(x => Array.isArray(x) && x[1] > 0).map(x => x[0] / x[1]); if (vs.length) r.perf.fasiSec = vs.sort((p, q) => p - q)[Math.floor(vs.length / 2)]; }
   return r; }
 async function getVisto(d){ const s = await store(); return (await s.get('visto/' + d, {type: 'json'}).catch(() => null))?.t || null; }
+async function getVistoX(d){ const s = await store(); return (await s.get('visto/' + d, {type: 'json'}).catch(() => null)) || null; }
+// 🗑 8.31 pulizia: chi non dà segni di vita da 12 mesi (ultima apertura, scadenza e attivazione) si cancella da solo, con 30 giorni di avviso prima
+const PUL_GG = 365, PUL_AVV = 30;
+async function pulizia(st, VX, now){
+  const s = await store(), by = {};
+  for (const d of Object.values(st.dispositivi)) if (!d.admin && d.codice) (by[d.codice] ||= []).push(d);
+  const via = [], presto = [];
+  for (const [code, D] of Object.entries(by)){
+    const c = st.codici[code]; if (c?.tieni) continue;
+    const last = Math.max(...D.map(d => Math.max(VX[d.id]?.t || 0, d.visto || 0, d.fino || 0, d.rinnovato || 0, d.at || 0)));
+    const gg = Math.floor((now - last) / 864e5);
+    if (gg >= PUL_GG) via.push({code, D, nome: c?.nome || D[0].nome || '', last});
+    else if (gg >= PUL_GG - PUL_AVV) presto.push({codice: code.slice(0, 4) + '-' + code.slice(4), nome: c?.nome || D[0].nome || '', last, fra: PUL_GG - gg});
+  }
+  const fatti = [];
+  for (const x of via.slice(0, 40)){
+    for (const d of x.D){ delete st.dispositivi[d.id]; if (s.delete) for (const k of ['visto/', 'uso/', 'msg/']) s.delete(k + d.id).catch(() => {});
+      if (d.bk && s.delete){ try { const m = await s.get('bkc/' + d.bk, {type: 'json'}).catch(() => null); if (m?.id) for (let i = 0; i < (m.n || 0); i++) await s.delete(`bk/${d.bk}/${m.id}/${i}`).catch(() => {}); await s.delete('bkc/' + d.bk).catch(() => {}); } catch {} } }
+    delete st.codici[x.code]; fatti.push({nome: x.nome, last: x.last, at: now});
+  }
+  if (fatti.length){ await save(st); const L = (await s.get('pulizia', {type: 'json'}).catch(() => null)) || {list: []}; L.list = [...L.list, ...fatti].slice(-50); await s.setJSON('pulizia', L); }
+  const log = ((await s.get('pulizia', {type: 'json'}).catch(() => null)) || {list: []}).list;
+  return {presto: presto.sort((a, b) => a.fra - b.fra), fatti: log.slice(-20).reverse(), giorni: PUL_GG};
+}
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '8.28';
-const SRV_BUILD = '8.28-a062e8e4';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '8.31';
+const SRV_BUILD = '8.31-f2ddc845';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -92,7 +119,7 @@ export default async (req, context) => {
       if (me.r !== 'a' && !dv) return out({ok: false, attivo: false, lucchetto: true}, 200, delCookie);
       // accesso scaduto: l'app si ferma finché Croby non manda un codice nuovo (i dati sul telefono restano)
       if (me.r !== 'a' && dv.fino && Date.now() > dv.fino) return out({ok: false, attivo: false, scaduto: true, fino: dv.fino, nome: dv.nome || me.n || '', lucchetto: true});
-      if (dv) await setVisto(me.d).catch(() => {});
+      if (dv) await setVisto(me.d, {v: u.searchParams.get('v'), i: u.searchParams.get('i')}).catch(() => {});
       const f = me.r === 'a' ? null : (dv?.fino || null);
       let fbNuovi = 0, errNuovi = 0; if (me.r === 'a'){ try { fbNuovi = (await loadFb()).list.filter(x => !x.letto && !x.arch).length; } catch {}
         try { const s = await store(); if (s.list){ const ks = (await s.list({prefix: 'err/'})).blobs.map(b => b.key); errNuovi = (await Promise.all(ks.map(k => s.get(k, {type: 'json'}).catch(() => null)))).filter(x => x && !x.letto).length; } } catch {} }
@@ -357,11 +384,12 @@ export default async (req, context) => {
       return out({ok: true, ...D, ora: now, ver: SRV_VER});
     }
     if (a === 'lista'){
-      const VISTO = {}, USO = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VISTO[id] = await getVisto(id); if (!st.dispositivi[id].admin) USO[id] = usoSum(await getUso(id)); }));
-      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null, allenatore: !!c.allenatore, tag: c.tag || [], nota: c.nota || '', max: c.max || 1, lez: c.lez || [], sc: c.sc || null}));
+      const VISTO = {}, USO = {}, VX = {}; await Promise.all(Object.keys(st.dispositivi).slice(0, 400).map(async id => { VX[id] = await getVistoX(id); VISTO[id] = VX[id]?.t || null; if (!st.dispositivi[id].admin) USO[id] = usoSum(await getUso(id)); }));
+      const codici = Object.values(st.codici).sort((x, y) => y.creato - x.creato).slice(0, 200).map(c => ({codice: c.codice.slice(0, 4) + '-' + c.codice.slice(4), nome: c.nome, creato: c.creato, scade: c.scade, usato: (c.usi || []).length > 0, revocato: !!c.revocato, bloccato: !!c.bloccato, durata: c.durata || null, allenatore: !!c.allenatore, tag: c.tag || [], nota: c.nota || '', max: c.max || 1, lez: c.lez || [], sc: c.sc || null, tieni: !!c.tieni}));
       const BK = {}; await Promise.all(Object.values(st.dispositivi).filter(d => d.bk).slice(0, 300).map(async d => { const s2 = await store(); BK[d.id] = await s2.get('bkc/' + d.bk, {type: 'json'}).catch(() => null); }));
-      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, uso: USO[d.id] || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d, bk: d.bk ? d.bk.slice(0, 4) + '-' + d.bk.slice(4) : null, bkAt: BK[d.id]?.at || null, bkSize: BK[d.id]?.size || 0}));
-      return out({ok: true, codici, dispositivi});
+      const dispositivi = Object.values(st.dispositivi).sort((x, y) => y.at - x.at).slice(0, 300).map(d => ({id: d.id, nome: d.nome, codice: d.codice ? d.codice.slice(0, 4) + '-' + d.codice.slice(4) : '', admin: !!d.admin, at: d.at, visto: VISTO[d.id] || d.visto || null, uso: USO[d.id] || null, ua: d.ua, bloccato: !!d.bloccato, fino: d.fino || null, rinnovi: d.rinnovi || 0, questo: d.id === me.d, bk: d.bk ? d.bk.slice(0, 4) + '-' + d.bk.slice(4) : null, bkAt: BK[d.id]?.at || null, bkSize: BK[d.id]?.size || 0, ver: VX[d.id]?.v || null, inst: VX[d.id]?.i ?? null}));
+      let pul = null; try { pul = await pulizia(st, VX, now); if (pul.fatti.some(x => x.at === now)) return out({ok: true, codici: codici.filter(c => st.codici[c.codice.replace('-', '')]), dispositivi: dispositivi.filter(d => d.admin || st.dispositivi[d.id]), pulizia: pul, srv: SRV_VER}); } catch {}
+      return out({ok: true, codici, dispositivi, pulizia: pul, srv: SRV_VER});
     }
     // blocca / sblocca un giocatore: tutti i dispositivi attivati con il suo codice
     if (a === 'bloccaGiocatore' || a === 'sbloccaGiocatore'){
@@ -431,6 +459,11 @@ export default async (req, context) => {
     if (a === 'limite'){
       const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
       c.max = Math.min(3, Math.max(1, parseInt(body.max, 10) || 1)); await save(st); return out({ok: true, max: c.max});
+    }
+    // 🗑 8.31: “Tieni” = questo giocatore non si cancella da solo dopo 12 mesi
+    if (a === 'tieni'){
+      const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
+      c.tieni = body.on !== false; await save(st); return out({ok: true, tieni: c.tieni});
     }
     // ⏳ più tempo per attivare un codice non ancora usato
     if (a === 'proroga'){
