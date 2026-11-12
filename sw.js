@@ -1,6 +1,6 @@
 // Coach Play Up – service worker: alla prima apertura salva tutta l'app sul dispositivo,
 // poi funziona anche senza internet. Con internet controlla se c'è una versione nuova.
-const CACHE = 'coach-play-up-v8.44-f30e8c59';
+const CACHE = 'coach-play-up-v8.45-774ba0e7';
 const FILES = [
 "./",
 "./icons/android-maskable-192.png",
@@ -54,6 +54,7 @@ self.addEventListener('fetch', e => {
   if (r.method !== 'GET') return;
   const url = new URL(r.url); if (url.origin !== location.origin) return;
   if (url.pathname.startsWith('/.netlify/')) return; // collegamento a internet: mai dalla cache
+  if (url.pathname.endsWith('.mp4')) return;   // i video passano dalla rete (Safari li chiede a pezzi)
   if (url.pathname.endsWith('version.json')){ e.respondWith(fetch(r, {cache: 'no-store'})); return; }
   // modello di precisione (12 MB): si scarica solo se serve e resta sul dispositivo anche dopo gli aggiornamenti
   if (url.pathname.includes('/pose/thunder')){ e.respondWith(caches.open('cpu-modelli').then(c => c.match(r, {ignoreSearch: true}).then(hit => hit || fetch(r).then(res => { if (res.ok) c.put(r, res.clone()); return res; })))); return; }
