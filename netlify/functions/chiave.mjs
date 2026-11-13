@@ -29,8 +29,29 @@ const rnd = n => { const b = crypto.getRandomValues(new Uint8Array(n)); return [
 const normCode = c => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);   // senza trattini e spazi
 const eqSafe = (a, b) => { a = String(a); b = String(b); let d = a.length ^ b.length; for (let i = 0; i < Math.max(a.length, b.length); i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0); return d === 0; };
 async function store(){ if (globalThis.__CPU_DB) return globalThis.__CPU_DB; const {getStore} = await import('@netlify/blobs'); return getStore({name: 'coach-play-up-chiavi', consistency: 'strong'}); }
-async function load(){ const s = await store(); return (await s.get('stato', {type: 'json'})) || {codici: {}, dispositivi: {}, errori: []}; }
-async function save(st){ const s = await store(); await s.setJSON('stato', st); }
+// 8.57: tanti dispositivi che si attivano nello stesso momento (es. una squadra la mattina della gara) non si cancellano più a vicenda.
+// Si legge l'archivio con la sua “versione” (etag); al salvataggio, se nel frattempo un altro l'ha cambiato, si rilegge e si rimettono sopra solo le proprie modifiche.
+const ORIG = new WeakMap(), MAPS = ['codici', 'dispositivi'], vuoto = () => ({codici: {}, dispositivi: {}, errori: []}), clone = o => JSON.parse(JSON.stringify(o));
+async function load(){ const s = await store(); let st = null, etag = null, ok = false;
+  if (typeof s.getWithMetadata === 'function'){ try { const r = await s.getWithMetadata('stato', {type: 'json'}); ok = true; if (r){ st = r.data; etag = r.etag || null; } } catch {} }
+  if (!ok) st = await s.get('stato', {type: 'json'});
+  st ||= vuoto(); ORIG.set(st, {base: clone(st), etag, cas: ok}); return st; }
+async function save(st){ const s = await store(), o = ORIG.get(st);
+  if (!o || !o.cas){ await s.setJSON('stato', st); return; }
+  const B = o.base, dm = {}, dt = {};
+  for (const m of MAPS){ const a = B[m] || {}, b = st[m] || {}, d = {}; for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) d[k] = k in b ? b[k] : null; dm[m] = d; }
+  for (const k of Object.keys(st)) if (!MAPS.includes(k) && JSON.stringify(B[k]) !== JSON.stringify(st[k])) dt[k] = st[k];
+  let cur = st, etag = o.etag;
+  for (let i = 0; i < 10; i++){
+    let r; try { r = await s.setJSON('stato', cur, etag ? {onlyIfMatch: etag} : {onlyIfNew: true}); } catch { await s.setJSON('stato', cur); r = {}; }
+    if (!r || r.modified !== false){ if (cur !== st){ for (const k of Object.keys(st)) if (!(k in cur)) delete st[k]; Object.assign(st, cur); } ORIG.set(st, {base: clone(st), etag: r?.etag || null, cas: !!r?.etag}); return; }
+    await new Promise(z => setTimeout(z, 25 + Math.random() * 90 * (i + 1)));
+    let f = null; try { f = await s.getWithMetadata('stato', {type: 'json'}); } catch {}
+    const fresh = f?.data || vuoto(); etag = f?.etag || null;
+    for (const m of MAPS){ fresh[m] ||= {}; for (const [k, v] of Object.entries(dm[m])){ if (v === null) delete fresh[m][k]; else fresh[m][k] = v; } }
+    Object.assign(fresh, dt); cur = fresh;
+  }
+  await s.setJSON('stato', cur); }
 // recensioni e consigli dei giocatori: archivio a parte, lo legge solo il proprietario
 // ogni messaggio è un file a parte (fb/<id>): due giocatori che scrivono insieme, o Croby che segna “letto”
 // mentre arriva un messaggio, non possono più cancellarsi a vicenda (prima era un elenco unico riscritto ogni volta)
@@ -90,8 +111,8 @@ async function pulizia(st, VX, now){
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '8.50';
-const SRV_BUILD = '8.50-e75e2780';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '8.57';
+const SRV_BUILD = '8.57-84648517';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
