@@ -1,6 +1,6 @@
 // Coach Play Up – service worker: alla prima apertura salva tutta l'app sul dispositivo,
 // poi funziona anche senza internet. Con internet controlla se c'è una versione nuova.
-const CACHE = 'coach-play-up-v8.59-b052fbef';
+const CACHE = 'coach-play-up-v8.60-499e8aaf';
 const FILES = [
 "./",
 "./icons/android-maskable-192.png",
