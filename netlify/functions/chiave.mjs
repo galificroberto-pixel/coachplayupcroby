@@ -112,8 +112,8 @@ async function pulizia(st, VX, now){
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '8.97';
-const SRV_BUILD = '8.97-d36a6576';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '8.99';
+const SRV_BUILD = '8.99-1fa2e488';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -460,6 +460,18 @@ export default async (req, context) => {
     if (a === 'annulla'){
       const c = st.codici[normCode(body.codice)]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
       c.revocato = true; await save(st); return out({ok: true});
+    }
+    // 8.98 💬 messaggio di Croby a un giocatore (o a tutti): arriva nell'app alla prossima apertura, senza numeri di telefono
+    if (a === 'msgManda'){
+      const preset = /^p[1-9]$/.test(body.preset || '') ? body.preset : '', testo = String(body.testo || '').replace(/\s+$/g, '').slice(0, 600);
+      if (!preset && testo.trim().length < 2) return out({ok: false, error: 'scrivi qualcosa'}, 400);
+      const tutti = body.tutti === true, cods = new Set((Array.isArray(body.codici) ? body.codici : []).map(normCode).filter(Boolean));
+      const T = Object.values(st.dispositivi).filter(d => !d.admin && !d.bloccato && (tutti || cods.has(normCode(d.codice || ''))));
+      if (!T.length) return out({ok: false, error: 'nessun dispositivo per questo giocatore'}, 404);
+      const s = await store(), id0 = 'm' + rnd(8);
+      for (const d of T){ const k = 'msg/' + d.id, M = (await s.get(k, {type: 'json'}).catch(() => null)) || {list: []};
+        M.list = [...M.list, {id: id0, at: now, tipo: 'croby', p: preset, testo: preset ? '' : testo, letto: false}].slice(-20); await s.setJSON(k, M); }
+      return out({ok: true, n: T.length, nomi: [...new Set(T.map(d => d.nome || ''))].filter(Boolean)});
     }
     // 🛠 avvisa chi ha avuto un errore: “ci sto lavorando” oppure “risolto” (arriva nell'app alla prossima apertura)
     if (a === 'errAvvisa'){
