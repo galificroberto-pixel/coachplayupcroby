@@ -35,36 +35,75 @@ ul{list-style:none;padding:0;margin:12px 0}li{padding:8px 0;border-bottom:1px so
   <a class="btn ghost" id="app" href="./"></a>
   <p class="small" id="note"></p>
 </div>
-<script>
-// Pagina di riparazione: toglie dal telefono la versione VECCHIA dell'app rimasta in memoria
-// (service worker e copia dei file). NON cancella i dati del giocatore (borsa, diario, partite, foto).
-const T = {
-  it: {t: '🛠 Riparazione dell’app', p: 'Tolgo dal telefono la versione vecchia dell’app rimasta in memoria. I tuoi dati (borsa, diario, partite, foto) NON vengono cancellati.', sw: 'Versione vecchia dell’app tolta', cache: 'Copia vecchia dei file cancellata', none: 'niente da togliere', done: '✅ Fatto! Ora apri l’attivazione (o l’app) e, se serve, reinstalla.', ver: 'Versione sul sito: {0}', go: '🔑 Apri l’attivazione', app: 'Apri l’app', note: 'Dopo la riparazione, se l’app era installata: toglila dalla schermata Home e reinstallala dalla pagina di attivazione (Android: ⋮ → “Installa app”; iPhone: Condividi → “Aggiungi alla schermata Home”).', wait: 'in corso…'},
-  en: {t: '🛠 App repair', p: 'I am removing the OLD version of the app kept in the phone’s memory. Your data (bag, diary, games, photos) is NOT deleted.', sw: 'Old app version removed', cache: 'Old copy of the files deleted', none: 'nothing to remove', done: '✅ Done! Now open the activation (or the app) and reinstall if needed.', ver: 'Version on the site: {0}', go: '🔑 Open the activation', app: 'Open the app', note: 'After the repair, if the app was installed: remove it from the Home screen and reinstall it from the activation page (Android: ⋮ → “Install app”; iPhone: Share → “Add to Home Screen”).', wait: 'working…'},
-  fil: {t: '🛠 Pag-aayos ng app', p: 'Inaalis ko sa telepono ang LUMANG bersyon ng app na nasa memorya. HINDI mabubura ang datos mo (bag, diary, laro, larawan).', sw: 'Naalis ang lumang bersyon ng app', cache: 'Nabura ang lumang kopya ng mga file', none: 'walang aalisin', done: '✅ Tapos na! Buksan na ang activation (o ang app) at mag-reinstall kung kailangan.', ver: 'Bersyon sa site: {0}', go: '🔑 Buksan ang activation', app: 'Buksan ang app', note: 'Pagkatapos ng pag-aayos, kung naka-install ang app: alisin ito sa Home screen at i-install ulit mula sa pahina ng activation (Android: ⋮ → “Install app”; iPhone: Share → “Add to Home Screen”).', wait: 'ginagawa…'}
+<script>const T = {
+    it: { t: '🛠 Riparazione dell’app', p: 'Tolgo dal telefono la versione vecchia dell’app rimasta in memoria. I tuoi dati (borsa, diario, partite, foto) NON vengono cancellati.', sw: 'Versione vecchia dell’app tolta', cache: 'Copia vecchia dei file cancellata', none: 'niente da togliere', done: '✅ Fatto! Ora apri l’attivazione (o l’app) e, se serve, reinstalla.', ver: 'Versione sul sito: {0}', go: '🔑 Apri l’attivazione', app: 'Apri l’app', note: 'Dopo la riparazione, se l’app era installata: toglila dalla schermata Home e reinstallala dalla pagina di attivazione (Android: ⋮ → “Installa app”; iPhone: Condividi → “Aggiungi alla schermata Home”).', wait: 'in corso…' },
+    en: { t: '🛠 App repair', p: 'I am removing the OLD version of the app kept in the phone’s memory. Your data (bag, diary, games, photos) is NOT deleted.', sw: 'Old app version removed', cache: 'Old copy of the files deleted', none: 'nothing to remove', done: '✅ Done! Now open the activation (or the app) and reinstall if needed.', ver: 'Version on the site: {0}', go: '🔑 Open the activation', app: 'Open the app', note: 'After the repair, if the app was installed: remove it from the Home screen and reinstall it from the activation page (Android: ⋮ → “Install app”; iPhone: Share → “Add to Home Screen”).', wait: 'working…' },
+    fil: { t: '🛠 Pag-aayos ng app', p: 'Inaalis ko sa telepono ang LUMANG bersyon ng app na nasa memorya. HINDI mabubura ang datos mo (bag, diary, laro, larawan).', sw: 'Naalis ang lumang bersyon ng app', cache: 'Nabura ang lumang kopya ng mga file', none: 'walang aalisin', done: '✅ Tapos na! Buksan na ang activation (o ang app) at mag-reinstall kung kailangan.', ver: 'Bersyon sa site: {0}', go: '🔑 Buksan ang activation', app: 'Buksan ang app', note: 'Pagkatapos ng pag-aayos, kung naka-install ang app: alisin ito sa Home screen at i-install ulit mula sa pahina ng activation (Android: ⋮ → “Install app”; iPhone: Share → “Add to Home Screen”).', wait: 'ginagawa…' }
 };
-let L = (() => { try { const s = JSON.parse(localStorage.getItem('lang') || 'null'); if (T[s]) return s; } catch {} const n = (navigator.language || 'it').slice(0, 2); return n === 'it' ? 'it' : /^(fil|tl)$/.test(n) ? 'fil' : 'en'; })();
+let L = (() => {
+    try {
+        const s = JSON.parse(localStorage.getItem('lang') || 'null');
+        if (T[s])
+            return s;
+    }
+    catch (_a) { }
+    const n = (navigator.language || 'it').slice(0, 2);
+    return n === 'it' ? 'it' : /^(fil|tl)$/.test(n) ? 'fil' : 'en';
+})();
 const $ = s => document.querySelector(s), t = k => T[L][k];
-const R = {sw: null, cache: null, ver: ''};
+const R = { sw: null, cache: null, ver: '' };
 const q = new URLSearchParams(location.search), c = q.get('c');
-if (c) $('#go').href = 'attiva.html?c=' + encodeURIComponent(c);
-function paint(){
-  document.documentElement.lang = L;
-  document.querySelectorAll('.lang button').forEach(b => b.setAttribute('aria-pressed', b.dataset.l === L));
-  $('#t').textContent = t('t'); $('#p').textContent = t('p'); $('#go').textContent = t('go'); $('#app').textContent = t('app'); $('#note').textContent = t('note');
-  const row = (k, n) => `<li>${n == null ? '⏳ ' + t(k) + ' · <span class="wait">' + t('wait') + '</span>' : '<span class="ok">✓</span> ' + t(k) + (n ? ' (' + n + ')' : ' · ' + t('none'))}</li>`;
-  $('#list').innerHTML = row('sw', R.sw) + row('cache', R.cache) + (R.sw != null && R.cache != null ? `<li><b>${t('done')}</b></li>` : '');
-  $('#ver').textContent = R.ver ? t('ver').replace('{0}', R.ver) : '';
+if (c)
+    $('#go').href = 'attiva.html?c=' + encodeURIComponent(c);
+function paint() {
+    document.documentElement.lang = L;
+    document.querySelectorAll('.lang button').forEach(b => b.setAttribute('aria-pressed', b.dataset.l === L));
+    $('#t').textContent = t('t');
+    $('#p').textContent = t('p');
+    $('#go').textContent = t('go');
+    $('#app').textContent = t('app');
+    $('#note').textContent = t('note');
+    const row = (k, n) => `<li>${n == null ? '⏳ ' + t(k) + ' · <span class="wait">' + t('wait') + '</span>' : '<span class="ok">✓</span> ' + t(k) + (n ? ' (' + n + ')' : ' · ' + t('none'))}</li>`;
+    $('#list').innerHTML = row('sw', R.sw) + row('cache', R.cache) + (R.sw != null && R.cache != null ? `<li><b>${t('done')}</b></li>` : '');
+    $('#ver').textContent = R.ver ? t('ver').replace('{0}', R.ver) : '';
 }
-document.querySelectorAll('.lang button').forEach(b => b.onclick = () => { L = b.dataset.l; try { localStorage.setItem('lang', JSON.stringify(L)); } catch {} paint(); });
+document.querySelectorAll('.lang button').forEach(b => b.onclick = () => {
+    L = b.dataset.l;
+    try {
+        localStorage.setItem('lang', JSON.stringify(L));
+    }
+    catch (_a) { }
+    paint();
+});
 paint();
 (async () => {
-  try { const rs = await navigator.serviceWorker?.getRegistrations?.() || []; for (const r of rs) await r.unregister(); R.sw = rs.length; } catch { R.sw = 0; }
-  paint();
-  try { const ks = await caches.keys(); for (const k of ks) await caches.delete(k); R.cache = ks.length; } catch { R.cache = 0; }
-  paint();
-  try { const v = await (await fetch('version.json?_=' + Date.now(), {cache: 'no-store'})).json(); R.ver = v.v || ''; } catch {}
-  paint();
+    var _a, _b;
+    try {
+        const rs = await ((_b = (_a = navigator.serviceWorker) === null || _a === void 0 ? void 0 : _a.getRegistrations) === null || _b === void 0 ? void 0 : _b.call(_a)) || [];
+        for (const r of rs)
+            await r.unregister();
+        R.sw = rs.length;
+    }
+    catch (_c) {
+        R.sw = 0;
+    }
+    paint();
+    try {
+        const ks = await caches.keys();
+        for (const k of ks)
+            await caches.delete(k);
+        R.cache = ks.length;
+    }
+    catch (_d) {
+        R.cache = 0;
+    }
+    paint();
+    try {
+        const v = await (await fetch('version.json?_=' + Date.now(), { cache: 'no-store' })).json();
+        R.ver = v.v || '';
+    }
+    catch (_e) { }
+    paint();
 })();
 </script>
 </body>

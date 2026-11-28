@@ -1,6 +1,6 @@
 // Coach Play Up – chiavi di attivazione (Netlify Functions + Netlify Blobs, gratuito).
 // Solo il proprietario (password in CPU_ADMIN su Netlify) crea codici; ogni codice si usa UNA volta
-// Su iPhone/iPad (Safari e app installata hanno memorie separate) lo stesso codice si può reinserire UNA volta entro 24 ore
+// Su iPhone/iPad (Safari e app installata hanno memorie separate) lo stesso codice si può reinserire UNA volta entro 7 giorni
 // nell'app installata: resta lo stesso dispositivo, con la stessa scadenza.
 // Azioni (POST JSON o GET):  stato · bkInfo {crea} · bkPut {id, i, n, d, size} · bkMeta {codice} · bkGet {codice, id, i} · bkLink {codice} · attiva {codice} · admin {password} · nuovo {nome, giorni, allenatore} · allenatore {codice, on} · lista · blocca {id} · sblocca {id} · esci
 // Recensioni e consigli: fbInvia {tipo, stelle, testo} (giocatori attivati) · fbLista · fbSegna {id|tutti, letto, arch} · fbElimina {id} · fbEliminaLetti · rinomina {codice, nome} · etichette {codice, tag[], nota} (solo proprietario) · fbMiei · fbEliminaMio {id} (giocatore, solo messaggi già letti)
@@ -20,7 +20,8 @@ async function verify(tok, admin){
 }
 const H = {'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'netlify-cdn-cache-control': 'no-store'};
 const COOKIE_AGE = 400 * 24 * 3600;
-const out = (o, s = 200, cookie) => { const h = new Headers(H); if (cookie != null) h.append('set-cookie', cookie); return new Response(JSON.stringify(o), {status: s, headers: h}); };
+// 8.95 la chiave viaggia anche nella risposta (solo giocatori): il telefono la tiene come scorta se il browser cancella il cookie
+const out = (o, s = 200, cookie) => { const h = new Headers(H); if (cookie != null){ h.append('set-cookie', cookie); const m = /^cpu_key=([^;]+)/.exec(cookie); if (m && !o.admin) o = {...o, tok: m[1]}; } return new Response(JSON.stringify(o), {status: s, headers: h}); };
 const setCookie = tok => `cpu_key=${tok}; Path=/; Max-Age=${COOKIE_AGE}; HttpOnly; Secure; SameSite=Lax`;
 const delCookie = 'cpu_key=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax';
 const cookieOf = (req, name) => { const m = (req.headers.get('cookie') || '').match(new RegExp('(?:^|;\\s*)' + name + '=([^;]+)')); return m ? decodeURIComponent(m[1]) : ''; };
@@ -111,8 +112,8 @@ async function pulizia(st, VX, now){
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '8.92';
-const SRV_BUILD = '8.92-2f6ebd4f';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '8.95';
+const SRV_BUILD = '8.95-4c48f57b';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -128,7 +129,9 @@ export default async (req, context) => {
   let body = {}; if (req.method === 'POST'){ try { body = await req.json(); } catch {} }
   const a = body.a || u.searchParams.get('a') || 'stato';
   if (!admin) return out({ok: true, lucchetto: false});
-  const me = await verify(cookieOf(req, 'cpu_key'), admin);
+  // 8.95 se il browser ha perso il cookie (privacy, pulizia automatica, iPhone sull'icona), vale la scorta salvata nell'app (solo giocatori, mai il proprietario)
+  let me = await verify(cookieOf(req, 'cpu_key'), admin);
+  if (!me){ const hk = req.headers.get('x-cpu-key') || ''; if (hk && hk.length < 2000){ const v = await verify(hk, admin).catch(() => null); if (v && v.r === 'u') me = v; } }
   await noteDeploy(context);
   try {
     if (a === 'stato'){
@@ -195,8 +198,8 @@ export default async (req, context) => {
       // iPhone: Safari → app sulla schermata Home (stesso telefono, memorie separate): si riusa lo stesso posto
       const first = usi.length === 1 ? Object.values(st.dispositivi).find(x => x.codice === code && !x.admin) : null;
       const andr = x => /Android/.test(x || '');
-      // stesso telefono, memorie separate: iPhone (Safari → app sulla Home) e Android (WhatsApp → Chrome / app installata), entro 24 ore
-      const gemello = first && now - usi[0] <= 24 * 3600e3 && ((apple(first.ua) && apple(uaNow) && !/Android|Windows/.test(uaNow)) || (andr(first.ua) && andr(uaNow))) && !(me && me.d === first.id);
+      // stesso telefono, memorie separate: iPhone (Safari → app sulla Home) e Android (WhatsApp → Chrome / app installata), entro 7 giorni
+      const gemello = first && now - usi[0] <= 7 * 24 * 3600e3 && ((apple(first.ua) && apple(uaNow) && !/Android|Windows/.test(uaNow)) || (andr(first.ua) && andr(uaNow))) && !(me && me.d === first.id);
       // 📱 Croby può permettere 2 o 3 dispositivi con lo stesso codice (es. telefono + tablet): stessa scadenza del primo
       const mine = Object.values(st.dispositivi).filter(x => x.codice === code && !x.admin), extra = usi.length && !gemello && (c.max || 1) > 1 && mine.length < (c.max || 1) && !(me && mine.some(x => x.id === me.d));
       if (extra){ const fino0 = Math.max(0, ...mine.map(x => x.fino || 0)) || null, d2 = 'dev-' + rnd(10); usi.push(now); c.usi = usi;
