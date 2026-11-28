@@ -1,6 +1,6 @@
 // Coach Play Up – chiavi di attivazione (Netlify Functions + Netlify Blobs, gratuito).
 // Solo il proprietario (password in CPU_ADMIN su Netlify) crea codici; ogni codice si usa UNA volta
-// Su iPhone/iPad (Safari e app installata hanno memorie separate) lo stesso codice si può reinserire UNA volta entro 7 giorni
+// Su iPhone/iPad (Safari e app installata hanno memorie separate) lo stesso codice si può reinserire UNA volta entro 24 ore
 // nell'app installata: resta lo stesso dispositivo, con la stessa scadenza.
 // Azioni (POST JSON o GET):  stato · bkInfo {crea} · bkPut {id, i, n, d, size} · bkMeta {codice} · bkGet {codice, id, i} · bkLink {codice} · attiva {codice} · admin {password} · nuovo {nome, giorni, allenatore} · allenatore {codice, on} · lista · blocca {id} · sblocca {id} · esci
 // Recensioni e consigli: fbInvia {tipo, stelle, testo} (giocatori attivati) · fbLista · fbSegna {id|tutti, letto, arch} · fbElimina {id} · fbEliminaLetti · rinomina {codice, nome} · etichette {codice, tag[], nota} (solo proprietario) · fbMiei · fbEliminaMio {id} (giocatore, solo messaggi già letti)
@@ -112,8 +112,8 @@ async function pulizia(st, VX, now){
 const short = s => String(s || '').slice(0, 60);
 // 💳 crediti Netlify: ogni versione caricata (deploy in produzione) costa 15 crediti. Netlify non dà i crediti rimasti a un'app,
 // quindi qui si annota ogni deploy nuovo (la prima volta che il server gira con quella versione) e la lettura scritta da Croby.
-const SRV_VER = '8.95';
-const SRV_BUILD = '8.95-4c48f57b';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
+const SRV_VER = '8.97';
+const SRV_BUILD = '8.97-d36a6576';   // diverso per ogni zip (anche con la stessa versione): così ogni caricamento si conta
 let DEPLOY_OK = false;
 async function noteDeploy(context){
   if (DEPLOY_OK) return; DEPLOY_OK = true;
@@ -141,6 +141,8 @@ export default async (req, context) => {
       // bloccato: l'app non si apre, ma la chiave resta sul dispositivo così con “Sblocca” torna a funzionare senza un codice nuovo
       if (me.r !== 'a' && dv?.bloccato) return out({ok: false, attivo: false, bloccato: true, lucchetto: true});
       if (me.r !== 'a' && !dv) return out({ok: false, attivo: false, lucchetto: true}, 200, delCookie);
+      // 8.96 il codice è stato rimesso su un altro browser o telefono: questo si spegne (resta un solo dispositivo attivo per codice)
+      if (me.r !== 'a' && (dv.g || 0) !== (me.g || 0)) return out({ok: false, attivo: false, spostato: true, lucchetto: true}, 200, delCookie);
       // accesso scaduto: l'app si ferma finché Croby non manda un codice nuovo (i dati sul telefono restano)
       if (me.r !== 'a' && dv.fino && Date.now() > dv.fino) return out({ok: false, attivo: false, scaduto: true, fino: dv.fino, nome: dv.nome || me.n || '', lucchetto: true});
       if (dv) await setVisto(me.d, {v: u.searchParams.get('v'), i: u.searchParams.get('i')}).catch(() => {});
@@ -198,17 +200,29 @@ export default async (req, context) => {
       // iPhone: Safari → app sulla schermata Home (stesso telefono, memorie separate): si riusa lo stesso posto
       const first = usi.length === 1 ? Object.values(st.dispositivi).find(x => x.codice === code && !x.admin) : null;
       const andr = x => /Android/.test(x || '');
-      // stesso telefono, memorie separate: iPhone (Safari → app sulla Home) e Android (WhatsApp → Chrome / app installata), entro 7 giorni
-      const gemello = first && now - usi[0] <= 7 * 24 * 3600e3 && ((apple(first.ua) && apple(uaNow) && !/Android|Windows/.test(uaNow)) || (andr(first.ua) && andr(uaNow))) && !(me && me.d === first.id);
+      // stesso telefono, memorie separate: iPhone (Safari → app sulla Home) e Android (WhatsApp → Chrome / app installata), entro 24 ore
+      const gemello = first && now - usi[0] <= 24 * 3600e3 && ((apple(first.ua) && apple(uaNow) && !/Android|Windows/.test(uaNow)) || (andr(first.ua) && andr(uaNow))) && !(me && me.d === first.id);
       // 📱 Croby può permettere 2 o 3 dispositivi con lo stesso codice (es. telefono + tablet): stessa scadenza del primo
       const mine = Object.values(st.dispositivi).filter(x => x.codice === code && !x.admin), extra = usi.length && !gemello && (c.max || 1) > 1 && mine.length < (c.max || 1) && !(me && mine.some(x => x.id === me.d));
       if (extra){ const fino0 = Math.max(0, ...mine.map(x => x.fino || 0)) || null, d2 = 'dev-' + rnd(10); usi.push(now); c.usi = usi;
         st.dispositivi[d2] = {id: d2, nome: c.nome || '', codice: code, at: now, fino: fino0, ua: short(uaNow), allenatore: !!c.allenatore}; await save(st);
         return out({ok: true, nome: c.nome || '', fino: fino0, rinnovo: false, altro: true, allenatore: !!c.allenatore}, 200, setCookie(await sign({d: d2, r: 'u', n: c.nome || '', i: now, f: fino0}, admin))); }
+      // 8.96 stesso browser che rimette il suo codice: nessun problema
+      if (usi.length && me && me.r !== 'a' && st.dispositivi[me.d]?.codice === code && (st.dispositivi[me.d].g || 0) === (me.g || 0)){ const d0 = st.dispositivi[me.d];
+        return out({ok: true, nome: d0.nome || c.nome || '', fino: d0.fino || null, rinnovo: false, gia: true}, 200, setCookie(await sign({d: d0.id, r: 'u', n: d0.nome || c.nome || '', i: now, f: d0.fino || null, g: d0.g || 0}, admin))); }
+      // 8.96 browser o telefono nuovo (Edge ↔ Chrome, WhatsApp → Samsung Internet, telefono cambiato): l'attivazione si SPOSTA qui e quella vecchia si spegne.
+      // Resta un solo dispositivo attivo per codice (un codice prestato non funziona in due); al massimo 3 spostamenti in 30 giorni.
+      if (usi.length && !gemello && mine.length){
+        const SP = (c.sposta || []).filter(t => now - t < 30 * 864e5); if (SP.length >= 3) return fail('troppi spostamenti: chiedi a Croby');
+        const vis = {}; try { const s2 = await store(); for (const x of mine) vis[x.id] = (await s2.get('visto/' + x.id, {type: 'json'}).catch(() => null))?.t || x.app || x.at || 0; } catch {}
+        const tg = mine.slice().sort((a, b) => (vis[a.id] || 0) - (vis[b.id] || 0))[0];
+        if (tg.bloccato) return fail('codice non valido');
+        SP.push(now); c.sposta = SP; tg.g = (tg.g || 0) + 1; tg.spostato = now; tg.spostamenti = (tg.spostamenti || 0) + 1; tg.ua = short(uaNow); await save(st);
+        return out({ok: true, nome: tg.nome || c.nome || '', fino: tg.fino || null, rinnovo: false, spostata: true, allenatore: !!(tg.allenatore || c.allenatore)}, 200, setCookie(await sign({d: tg.id, r: 'u', n: tg.nome || c.nome || '', i: now, f: tg.fino || null, g: tg.g}, admin))); }
       if (usi.length && !gemello) return fail('codice già usato: ogni codice vale una volta sola');
       usi.push(now); c.usi = usi;
       if (gemello){ first.app = now; first.ua = short(uaNow); await save(st);
-        return out({ok: true, nome: c.nome || '', fino: first.fino || null, rinnovo: false, ios: true}, 200, setCookie(await sign({d: first.id, r: 'u', n: c.nome || '', i: now, f: first.fino || null}, admin))); }
+        return out({ok: true, nome: c.nome || '', fino: first.fino || null, rinnovo: false, ios: true}, 200, setCookie(await sign({d: first.id, r: 'u', n: c.nome || '', i: now, f: first.fino || null, g: first.g || 0}, admin))); }
       const dur = c.durata ? c.durata * 864e5 : 0;
       // rinnovo: stesso dispositivo già attivato (anche se scaduto) → stesso posto, il tempo nuovo si aggiunge a quello che restava
       const old = me && me.r !== 'a' ? st.dispositivi[me.d] : null;
@@ -216,7 +230,7 @@ export default async (req, context) => {
       if (old){ d = me.d; fino = dur ? Math.max(now, old.fino || now) + dur : null; Object.assign(old, {codice: code, nome: c.nome || old.nome || '', fino, rinnovi: (old.rinnovi || 0) + 1, rinnovato: now, bloccato: false, allenatore: !!(old.allenatore || c.allenatore)}); }
       else { d = 'dev-' + rnd(10); fino = c.reset && c.reset.fino && c.reset.fino > now ? c.reset.fino : dur ? usi[0] + dur : null; st.dispositivi[d] = {id: d, nome: c.nome || '', codice: code, at: now, fino, ua: short(req.headers.get('user-agent')), allenatore: !!c.allenatore}; }
       await save(st);
-      return out({ok: true, nome: c.nome || '', fino, rinnovo: !!old, allenatore: !!(c.allenatore || old?.allenatore)}, 200, setCookie(await sign({d, r: 'u', n: c.nome || '', i: now, f: fino}, admin)));
+      return out({ok: true, nome: c.nome || '', fino, rinnovo: !!old, allenatore: !!(c.allenatore || old?.allenatore)}, 200, setCookie(await sign({d, r: 'u', n: c.nome || '', i: now, f: fino, g: st.dispositivi[d]?.g || 0}, admin)));
     }
     if (a === 'fbInvia'){
       if (!me) return out({ok: false, error: 'app non attivata'}, 403);
@@ -428,7 +442,7 @@ export default async (req, context) => {
       const code = normCode(body.codice), c = st.codici[code]; if (!c) return out({ok: false, error: 'codice non trovato'}, 404);
       let n = 0, fino = 0; const s = await store();
       for (const d of Object.values(st.dispositivi)) if (d.codice === code && !d.admin){ fino = Math.max(fino, d.fino || 0); delete st.dispositivi[d.id]; n++; if (s.delete){ s.delete('visto/' + d.id).catch(() => {}); } }
-      if (body.riattiva){ Object.assign(c, {usi: [], bloccato: false, revocato: false, scade: now + 7 * 864e5, reset: {fino: fino || null, at: now}}); }
+      if (body.riattiva){ Object.assign(c, {usi: [], sposta: [], bloccato: false, revocato: false, scade: now + 7 * 864e5, reset: {fino: fino || null, at: now}}); }
       else delete st.codici[code];
       await save(st);
       return out({ok: true, dispositivi: n, riattiva: !!body.riattiva, codice: code.slice(0, 4) + '-' + code.slice(4), nome: c.nome || '', scade: c.scade, durata: c.durata || null, fino: fino || null});
